@@ -228,7 +228,7 @@ export default function TimeLogsCalendar() {
             endAccessor="end"
             style={{ height: 600 }}
             view={view}
-            onView={(newView) => setView(newView as 'month' | 'week' | 'day' | 'agenda')}
+            onView={(newView: string) => setView(newView as 'month' | 'week' | 'day' | 'agenda')}
             date={currentDate}
             onNavigate={setCurrentDate}
             onSelectSlot={handleSelectSlot}

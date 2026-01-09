@@ -24,6 +24,11 @@ interface StepData {
   // Step 4: Service Selection
   serviceType: string;
   workDescription: string;
+  
+  // Step 5: Customer Info
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
 }
 
 const SERVICE_TYPES = [
@@ -52,6 +57,9 @@ export default function VehicleEntry() {
     mileage: '',
     serviceType: '',
     workDescription: '',
+    customerName: '',
+    customerEmail: '',
+    customerPhone: '',
   });
 
   const [previews, setPreviews] = useState<{ vehicle: string | null; document: string | null }>({
@@ -92,14 +100,79 @@ export default function VehicleEntry() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       
+      const updates: any = {};
+      let successMessages: string[] = [];
+      let extractedVin = '';
+      
+      // Extract all data from OCR response
       if (response.data.vin) {
-        setFormData((prev) => ({ ...prev, vin: response.data.vin, vinFromOCR: response.data.vin }));
-        toast.success('VIN erfolgreich erkannt!');
+        extractedVin = response.data.vin;
+        updates.vin = extractedVin;
+        updates.vinFromOCR = extractedVin;
+        successMessages.push('VIN');
+      }
+      
+      if (response.data.customerName) {
+        updates.customerName = response.data.customerName;
+        successMessages.push('Kundenname');
+      }
+      
+      // Add all other extracted vehicle data
+      if (response.data.brand) {
+        updates.brand = response.data.brand;
+        successMessages.push('Marke');
+      }
+      
+      if (response.data.model) {
+        updates.model = response.data.model;
+        if (!successMessages.includes('Modell')) successMessages.push('Modell');
+      }
+      
+      if (response.data.year) {
+        updates.year = response.data.year;
+        if (!successMessages.includes('Jahr')) successMessages.push('Jahr');
+      }
+      
+      if (response.data.color) {
+        updates.color = response.data.color;
+        if (!successMessages.includes('Farbe')) successMessages.push('Farbe');
+      }
+      
+      if (response.data.licensePlate) {
+        updates.licensePlate = response.data.licensePlate;
+        if (!successMessages.includes('Kennzeichen')) successMessages.push('Kennzeichen');
+      }
+      
+      if (Object.keys(updates).length > 0) {
+        setFormData((prev) => ({ ...prev, ...updates }));
+        toast.success(`${successMessages.join(', ')} erfolgreich erkannt!`);
+        
+        // Automatically decode VIN if it was extracted and we don't have all data from OCR
+        if (extractedVin && extractedVin.length === 17 && (!response.data.brand || !response.data.model)) {
+          try {
+            const decodeResponse = await api.get(`/vehicles/decode/${extractedVin}`);
+            const decodeData = decodeResponse.data;
+            
+            setFormData((prev) => ({
+              ...prev,
+              // Only use decoded data if OCR didn't provide it
+              brand: prev.brand || decodeData.vehicle?.make || decodeData.make || '',
+              model: prev.model || decodeData.vehicle?.model || decodeData.model || '',
+              year: prev.year || (decodeData.vehicle?.year || decodeData.year ? (decodeData.vehicle?.year || decodeData.year).toString() : ''),
+              color: prev.color || decodeData.color || '',
+            }));
+            
+            toast.success('VIN automatisch dekodiert!');
+          } catch (decodeError) {
+            // VIN decode failed, but that's okay - user can still proceed
+            console.log('VIN decode failed:', decodeError);
+          }
+        }
       } else {
-        toast.error('VIN konnte nicht automatisch erkannt werden. Bitte manuell eingeben.');
+        toast.error('Daten konnten nicht automatisch erkannt werden. Bitte manuell eingeben.');
       }
     } catch (error) {
-      toast.error('VIN-Erkennung fehlgeschlagen. Bitte manuell eingeben.');
+      toast.error('OCR-Erkennung fehlgeschlagen. Bitte manuell eingeben.');
     } finally {
       setIsLoading(false);
     }
@@ -151,7 +224,10 @@ export default function VehicleEntry() {
         mileage: formData.mileage ? parseInt(formData.mileage) : undefined,
         serviceType: formData.serviceType,
         workDescription: formData.workDescription || undefined,
-        isActive: true,
+        customerName: formData.customerName || undefined,
+        customerEmail: formData.customerEmail || undefined,
+        customerPhone: formData.customerPhone || undefined,
+        isActive: false, // New cars start as "in work" status
       };
 
       const vehicleResponse = await api.post('/vehicles', vehicleData);
@@ -195,6 +271,8 @@ export default function VehicleEntry() {
         return formData.brand && formData.model;
       case 4:
         return formData.serviceType !== '';
+      case 5:
+        return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
       default:
         return false;
     }
@@ -219,7 +297,7 @@ export default function VehicleEntry() {
         {/* Progress Steps */}
         <div className="card mb-6">
           <div className="flex items-center justify-between">
-            {[1, 2, 3, 4].map((step) => (
+            {[1, 2, 3, 4, 5].map((step) => (
               <div key={step} className="flex items-center flex-1">
                 <div className="flex flex-col items-center flex-1">
                   <div
@@ -238,9 +316,10 @@ export default function VehicleEntry() {
                     {step === 2 && 'VIN'}
                     {step === 3 && 'Details'}
                     {step === 4 && 'Service'}
+                    {step === 5 && 'Kunde'}
                   </p>
                 </div>
-                {step < 4 && (
+                {step < 5 && (
                   <div
                     className={`flex-1 h-1 mx-2 ${
                       currentStep > step ? 'bg-green-500' : 'bg-gray-200'
@@ -360,7 +439,7 @@ export default function VehicleEntry() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-medium text-blue-900">VIN automatisch erkennen</p>
+                      <p className="font-medium text-blue-900">VIN & Name automatisch erkennen</p>
                       <p className="text-sm text-blue-700">Aus dem Fahrzeugausweis-Foto</p>
                     </div>
                     <button
@@ -368,7 +447,14 @@ export default function VehicleEntry() {
                       disabled={isLoading}
                       className="btn btn-primary"
                     >
-                      {isLoading ? 'Erkenne...' : 'VIN erkennen'}
+                      {isLoading ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2 inline-block" />
+                          Erkenne...
+                        </>
+                      ) : (
+                        'VIN & Name erkennen'
+                      )}
                     </button>
                   </div>
                 </div>
@@ -537,6 +623,79 @@ export default function VehicleEntry() {
             </div>
           )}
 
+          {/* Step 5: Customer Info */}
+          {currentStep === 5 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Schritt 5: Kundeninformationen</h2>
+                <p className="text-gray-600">Kundendaten erfassen (aus Fahrzeugausweis)</p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-blue-900">Kundenname automatisch erkennen</p>
+                    <p className="text-sm text-blue-700">Aus dem Fahrzeugausweis-Foto</p>
+                  </div>
+                  <button
+                    onClick={handleExtractVIN}
+                    disabled={!formData.documentPhoto || isLoading}
+                    className="btn btn-primary"
+                  >
+                    {isLoading ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                        Erkenne...
+                      </>
+                    ) : (
+                      'VIN & Name erkennen'
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Kundenname *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.customerName}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, customerName: e.target.value }))}
+                    className="input"
+                    required
+                    placeholder="Aus Fahrzeugausweis"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    E-Mail *
+                  </label>
+                  <input
+                    type="email"
+                    value={formData.customerEmail}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, customerEmail: e.target.value }))}
+                    className="input"
+                    required
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Telefon (für WhatsApp)
+                  </label>
+                  <input
+                    type="tel"
+                    value={formData.customerPhone}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, customerPhone: e.target.value }))}
+                    className="input"
+                    placeholder="+41..."
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Navigation Buttons */}
           <div className="flex justify-between pt-6 mt-6 border-t">
             <button
@@ -548,7 +707,7 @@ export default function VehicleEntry() {
               Zurück
             </button>
 
-            {currentStep < 4 ? (
+            {currentStep < 5 ? (
               <button
                 onClick={() => setCurrentStep((prev) => prev + 1)}
                 disabled={!canProceed()}

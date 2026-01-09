@@ -18,6 +18,9 @@ import {
   Receipt,
   FileCheck,
   AlertCircle,
+  ExternalLink,
+  FileImage,
+  X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -97,6 +100,7 @@ export default function VehicleDetail() {
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   const [isCreatingEstimate, setIsCreatingEstimate] = useState(false);
   const [servicePackage, setServicePackage] = useState<any>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -307,27 +311,77 @@ export default function VehicleDetail() {
             <ImageIcon className="w-5 h-5" />
             Fotos
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-6">
+            {/* Car Photos Category */}
             {vehicle.photoUrl && (
               <div>
-                <p className="text-sm text-gray-600 mb-2">Fahrzeugfoto</p>
-                <img
-                  src={vehicle.photoUrl}
-                  alt="Vehicle"
-                  className="w-full h-64 object-cover rounded-lg border border-gray-200"
-                />
+                <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <Car className="w-4 h-4" />
+                  Fahrzeugfotos
+                </h3>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setSelectedImage(vehicle.photoUrl!)}
+                    className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <FileImage className="w-5 h-5 text-gray-400 group-hover:text-primary-600" />
+                      <span className="text-sm font-medium text-gray-700">
+                        {vehicle.photoUrl.split('/').pop() || 'Fahrzeugfoto.jpg'}
+                      </span>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-primary-600" />
+                  </button>
+                </div>
               </div>
             )}
+
+            {/* Document Photos Category */}
             {vehicle.documentPhotoUrl && (
               <div>
-                <p className="text-sm text-gray-600 mb-2">Fahrzeugausweis</p>
-                <img
-                  src={vehicle.documentPhotoUrl}
-                  alt="Document"
-                  className="w-full h-64 object-cover rounded-lg border border-gray-200"
-                />
+                <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  Fahrzeugausweis
+                </h3>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setSelectedImage(vehicle.documentPhotoUrl!)}
+                    className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <FileImage className="w-5 h-5 text-gray-400 group-hover:text-primary-600" />
+                      <span className="text-sm font-medium text-gray-700">
+                        {vehicle.documentPhotoUrl.split('/').pop() || 'Fahrzeugausweis.jpg'}
+                      </span>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-primary-600" />
+                  </button>
+                </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Image Modal */}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-full">
+            <button
+              onClick={() => setSelectedImage(null)}
+              className="absolute top-4 right-4 text-white hover:text-gray-300 bg-black bg-opacity-50 rounded-full p-2 z-10"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={selectedImage}
+              alt="Full size"
+              className="max-w-full max-h-[90vh] object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

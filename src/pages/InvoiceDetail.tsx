@@ -90,164 +90,295 @@ export default function InvoiceDetail() {
 
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;
+    const blueColor: [number, number, number] = [2, 132, 199]; // primary-600: #0284c7
+    const lightBlue: [number, number, number] = [241, 245, 249]; // slate-100 for backgrounds
     let yPos = margin;
 
-    // Header
-    doc.setFontSize(20);
+    // Blue vertical bar on left (like the examples)
+    doc.setFillColor(...blueColor);
+    doc.rect(margin, yPos, 4, pageHeight - margin * 2, 'F');
+
+    // Company name header (no logo, just text)
+    doc.setFontSize(28);
     doc.setFont('helvetica', 'bold');
-    doc.text('OCEAN GARAGE', pageWidth / 2, yPos, { align: 'center' });
+    doc.setTextColor(...blueColor);
+    doc.text('OCEANCAR', margin + 8, yPos + 12);
+    yPos += 25;
+
+    // Company info section (right side, like the examples)
+    const companyInfoX = pageWidth - margin;
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0, 0, 0);
+    
+    // Company name bold
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text('Ocean Garage', companyInfoX, yPos - 18, { align: 'right' });
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const companyInfo = [
+      'Fahrzeugreparatur & Service',
+      'Schweiz',
+    ];
+    companyInfo.forEach((line, idx) => {
+      doc.text(line, companyInfoX, yPos - 10 + (idx * 5), { align: 'right' });
+    });
+
+    yPos += 15;
+
+    // Document type (large, blue, top right)
+    doc.setFontSize(32);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...blueColor);
+    const docType = invoice.type === 'invoice' ? 'RECHNUNG' : 'ANGEBOT';
+    doc.text(docType, companyInfoX, yPos, { align: 'right' });
     yPos += 10;
 
-    doc.setFontSize(12);
+    // Offer/Invoice details box (top right, like examples)
+    const detailBoxY = yPos;
+    doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text('Fahrzeugreparatur & Service', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 15;
+    doc.setTextColor(60, 60, 60);
+    
+    const docNumber = invoice.invoiceNumber.replace('INV-', 'EST-');
+    const validUntil = format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'dd.MM.yyyy');
+    
+    doc.text(`Offerten-Nr.: ${docNumber}`, companyInfoX, detailBoxY, { align: 'right' });
+    doc.text(`Datum: ${format(new Date(invoice.createdAt), 'dd.MM.yyyy')}`, companyInfoX, detailBoxY + 5, { align: 'right' });
+    if (invoice.type === 'estimate') {
+      doc.text(`Gültig bis: ${validUntil}`, companyInfoX, detailBoxY + 10, { align: 'right' });
+    }
+    
+    yPos = detailBoxY + 18;
 
-    // Invoice Info
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text(
-      invoice.type === 'invoice' ? 'RECHNUNG' : 'ANGEBOT',
-      margin,
-      yPos
-    );
-    yPos += 8;
-
+    // Customer info box (left, with background like examples)
+    const customerBoxY = yPos;
+    doc.setFillColor(...lightBlue);
+    const customerBoxHeight = invoice.customerAddress ? 35 : invoice.customerEmail ? 28 : 22;
+    doc.rect(margin + 8, customerBoxY, 75, customerBoxHeight, 'F');
+    
     doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Rechnungsnummer: ${invoice.invoiceNumber}`, margin, yPos);
-    yPos += 6;
-    doc.text(`Datum: ${format(new Date(invoice.createdAt), 'dd.MM.yyyy')}`, margin, yPos);
-    yPos += 6;
-    doc.text(`Status: ${getStatusText(invoice.status)}`, margin, yPos);
-    yPos += 15;
-
-    // Customer Info
-    doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.text('Rechnungsempfänger:', margin, yPos);
-    yPos += 7;
-
-    doc.setFontSize(10);
+    doc.setTextColor(...blueColor);
+    doc.text(invoice.customerName, margin + 10, customerBoxY + 6);
+    
     doc.setFont('helvetica', 'normal');
-    doc.text(invoice.customerName, margin, yPos);
-    yPos += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    let customerLineY = customerBoxY + 11;
+    
     if (invoice.customerEmail) {
-      doc.text(invoice.customerEmail, margin, yPos);
-      yPos += 6;
+      doc.text(invoice.customerEmail, margin + 10, customerLineY);
+      customerLineY += 5;
     }
     if (invoice.customerAddress) {
       const addressLines = invoice.customerAddress.split('\n');
-      addressLines.forEach((line) => {
-        doc.text(line, margin, yPos);
-        yPos += 6;
+      addressLines.forEach((line: string) => {
+        doc.text(line, margin + 10, customerLineY);
+        customerLineY += 5;
       });
     }
-    yPos += 10;
 
-    // Vehicle Info
-    doc.setFontSize(12);
+    // Vehicle info box (right, with background)
+    const vehicleBoxY = customerBoxY;
+    const vehicleBoxHeight = invoice.vehicle.brand && invoice.vehicle.model ? 25 : 20;
+    doc.setFillColor(250, 250, 250);
+    doc.rect(pageWidth - margin - 75, vehicleBoxY, 75, vehicleBoxHeight, 'F');
+    
     doc.setFont('helvetica', 'bold');
-    doc.text('Fahrzeug:', margin, yPos);
-    yPos += 7;
-
-    doc.setFontSize(10);
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Fahrzeug:', pageWidth - margin - 73, vehicleBoxY + 6);
+    
     doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
     if (invoice.vehicle.brand && invoice.vehicle.model) {
-      doc.text(`${invoice.vehicle.brand} ${invoice.vehicle.model}`, margin, yPos);
-      yPos += 6;
+      doc.text(`${invoice.vehicle.brand} ${invoice.vehicle.model}`, pageWidth - margin - 73, vehicleBoxY + 11);
+      doc.text(`VIN: ${invoice.vehicle.vin}`, pageWidth - margin - 73, vehicleBoxY + 16);
+    } else {
+      doc.text(`VIN: ${invoice.vehicle.vin}`, pageWidth - margin - 73, vehicleBoxY + 11);
     }
-    doc.text(`VIN: ${invoice.vehicle.vin}`, margin, yPos);
-    yPos += 15;
 
-    // Items Table
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Positionen:', margin, yPos);
-    yPos += 10;
+    yPos = Math.max(customerBoxY + customerBoxHeight, vehicleBoxY + vehicleBoxHeight) + 15;
 
-    // Table header
-    doc.setFillColor(240, 240, 240);
-    doc.rect(margin, yPos - 5, pageWidth - 2 * margin, 8, 'F');
+    // Introductory text (like examples)
     doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Beschreibung', margin + 2, yPos);
-    doc.text('Menge', margin + 100, yPos);
-    doc.text('Einzelpreis', margin + 120, yPos);
-    doc.text('Gesamt', pageWidth - margin - 30, yPos, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0, 0, 0);
+    doc.text(
+      invoice.type === 'estimate' 
+        ? 'Vielen Dank für Ihre Anfrage! Wir freuen uns, Ihnen folgende Offerte zu unterbreiten:'
+        : 'Im Folgenden finden Sie die Details zu Ihrer Rechnung:',
+      margin + 8,
+      yPos
+    );
     yPos += 10;
 
-    // Table rows
+    // Items table header - professional style
+    doc.setFillColor(...blueColor);
+    doc.rect(margin + 8, yPos - 4, pageWidth - 2 * margin - 8, 7, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(255, 255, 255);
+    
+    const tableStart = margin + 10;
+    const descWidth = 75; // Description column width (more space now)
+    const qtyWidth = 100; // Quantity column position
+    const unitWidth = 120; // Unit column position
+    const priceWidth = 145; // Price column position (right-aligned)
+    const totalWidth = pageWidth - margin - 2; // Total column position (right aligned)
+    
+    doc.text('BESCHREIBUNG', tableStart, yPos);
+    doc.text('MENGE', qtyWidth, yPos, { align: 'center' });
+    doc.text('EINHEIT', unitWidth, yPos, { align: 'center' });
+    doc.text('PREIS', priceWidth, yPos, { align: 'right' });
+    doc.text('TOTAL', totalWidth, yPos, { align: 'right' });
+    yPos += 8;
+
+    // Table rows - clean white/light gray alternating
     doc.setFont('helvetica', 'normal');
-    invoice.items.forEach((item) => {
-      if (yPos > 250) {
+    doc.setTextColor(0, 0, 0);
+    invoice.items.forEach((item: any, idx: number) => {
+      if (yPos > pageHeight - 70) {
         doc.addPage();
-        yPos = margin;
+        yPos = margin + 10;
       }
-      doc.text(item.description.substring(0, 40), margin + 2, yPos);
-      doc.text(item.quantity.toString(), margin + 100, yPos);
-      doc.text(`CHF ${item.unitPrice.toFixed(2)}`, margin + 120, yPos);
-      doc.text(`CHF ${item.total.toFixed(2)}`, pageWidth - margin - 30, yPos, { align: 'right' });
-      yPos += 8;
+
+      // Alternate row colors (white and very light gray)
+      if (idx % 2 === 0) {
+        doc.setFillColor(255, 255, 255);
+      } else {
+        doc.setFillColor(248, 250, 252);
+      }
+      doc.rect(margin + 8, yPos - 4, pageWidth - 2 * margin - 8, 7, 'F');
+
+      doc.setFontSize(9);
+      const descLines = doc.splitTextToSize(item.description, descWidth - 3);
+      const firstLine = descLines[0];
+      doc.text(firstLine, tableStart, yPos);
+      
+      // Quantity
+      doc.text(item.quantity.toString(), qtyWidth, yPos, { align: 'center' });
+      
+      // Unit (Stück)
+      doc.text('Stück', unitWidth, yPos, { align: 'center' });
+      
+      // Unit Price (right-aligned)
+      doc.text(`CHF ${item.unitPrice.toFixed(2)}`, priceWidth, yPos, { align: 'right' });
+      
+      // Total (right-aligned, bold)
+      doc.setFont('helvetica', 'bold');
+      doc.text(`CHF ${item.total.toFixed(2)}`, totalWidth, yPos, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      
+      yPos += 7;
+      
+      // Additional description lines
+      if (descLines.length > 1) {
+        descLines.slice(1).forEach((line: string) => {
+          if (yPos > pageHeight - 70) {
+            doc.addPage();
+            yPos = margin + 10;
+          }
+          doc.text(line, tableStart, yPos);
+          yPos += 5;
+          // Adjust for continuation lines - don't repeat other columns
+          yPos -= 1;
+        });
+      }
     });
 
-    yPos += 5;
-    if (yPos > 250) {
+    yPos += 3;
+    if (yPos > pageHeight - 50) {
       doc.addPage();
       yPos = margin;
     }
 
-    // Totals
+    // Totals section - professional style
+    yPos += 3;
     doc.setDrawColor(200, 200, 200);
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 10;
-
-    doc.setFontSize(10);
-    doc.text('Zwischensumme:', pageWidth - margin - 50, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.subtotal.toFixed(2)}`, pageWidth - margin - 5, yPos, { align: 'right' });
+    doc.setLineWidth(0.3);
+    doc.line(pageWidth - margin - 75, yPos, pageWidth - margin - 2, yPos);
     yPos += 8;
 
-    doc.text(`MwSt. (${invoice.taxRate}%):`, pageWidth - margin - 50, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.taxAmount.toFixed(2)}`, pageWidth - margin - 5, yPos, { align: 'right' });
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0, 0, 0);
+    doc.text('Zwischentotal:', pageWidth - margin - 60, yPos, { align: 'right' });
+    doc.text(`CHF ${invoice.subtotal.toFixed(2)}`, pageWidth - margin - 2, yPos, { align: 'right' });
+    yPos += 7;
+
+    doc.text(`MWST (${invoice.taxRate}%):`, pageWidth - margin - 60, yPos, { align: 'right' });
+    doc.text(`CHF ${invoice.taxAmount.toFixed(2)}`, pageWidth - margin - 2, yPos, { align: 'right' });
     yPos += 10;
 
+    // Total with blue emphasis (like examples)
+    doc.setFillColor(...lightBlue);
+    doc.rect(pageWidth - margin - 85, yPos - 3, 83, 8, 'F');
+    
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
     doc.setDrawColor(0, 0, 0);
-    doc.line(pageWidth - margin - 60, yPos - 2, pageWidth - margin, yPos - 2);
-    doc.text('Gesamtbetrag:', pageWidth - margin - 50, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.total.toFixed(2)}`, pageWidth - margin - 5, yPos, { align: 'right' });
+    doc.setLineWidth(0.5);
+    doc.line(pageWidth - margin - 85, yPos - 3, pageWidth - margin - 2, yPos - 3);
+    doc.text('Gesamtbetrag:', pageWidth - margin - 60, yPos + 2, { align: 'right' });
+    doc.setTextColor(...blueColor);
+    doc.text(`CHF ${invoice.total.toFixed(2)}`, pageWidth - margin - 2, yPos + 2, { align: 'right' });
     yPos += 15;
+
+    doc.setTextColor(0, 0, 0);
+    
+    // Closing message
+    if (invoice.type === 'estimate') {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Bei Fragen stehen wir Ihnen jederzeit gerne zur Verfügung.', margin + 8, yPos);
+      yPos += 8;
+    }
 
     // Notes
     if (invoice.notes) {
-      if (yPos > 250) {
+      if (yPos > pageHeight - 40) {
         doc.addPage();
         yPos = margin;
       }
-      doc.setFontSize(10);
+      doc.setFontSize(9);
       doc.setFont('helvetica', 'bold');
-      doc.text('Bemerkungen:', margin, yPos);
-      yPos += 7;
+      doc.text('Bemerkungen:', margin + 8, yPos);
+      yPos += 6;
       doc.setFont('helvetica', 'normal');
       const notesLines = doc.splitTextToSize(invoice.notes, pageWidth - 2 * margin);
       notesLines.forEach((line: string) => {
-        doc.text(line, margin, yPos);
-        yPos += 6;
+        if (yPos > pageHeight - 20) {
+          doc.addPage();
+          yPos = margin;
+        }
+        doc.text(line, margin + 8, yPos);
+        yPos += 5;
       });
     }
 
-    // Footer
+    // Footer on all pages
     const pageCount = doc.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
+      doc.setTextColor(150, 150, 150);
       doc.text(
         `Seite ${i} von ${pageCount}`,
         pageWidth / 2,
-        doc.internal.pageSize.getHeight() - 10,
+        pageHeight - 10,
+        { align: 'center' }
+      );
+      doc.text(
+        'Ocean Garage - Fahrzeugreparatur & Service',
+        pageWidth / 2,
+        pageHeight - 5,
         { align: 'center' }
       );
     }

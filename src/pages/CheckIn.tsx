@@ -45,7 +45,7 @@ export default function CheckIn() {
   }, []);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (activeSession && !activeSession.checkOut) {
       interval = setInterval(() => {
         updateElapsedTime();
