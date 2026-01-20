@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Upload } from 'lucide-react';
+import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Pause, Play } from 'lucide-react';
 import DerendingerProductPicker from '../components/DerendingerProductPicker';
 
 interface SelectedProduct {
@@ -35,9 +35,10 @@ interface StepData {
   licensePlate: string;
   mileage: string;
   
-  // Step 4: Service Selection
+  // Step 4: Service Selection + Status
   serviceType: string;
   workDescription: string;
+  vehicleStatus: 'active' | 'on_hold';
   selectedProducts: SelectedProduct[];
   
   // Step 5: Customer Info
@@ -72,6 +73,7 @@ export default function VehicleEntry() {
     mileage: '',
     serviceType: '',
     workDescription: '',
+    vehicleStatus: 'active', // Default to active
     selectedProducts: [],
     customerName: '',
     customerEmail: '',
@@ -82,6 +84,18 @@ export default function VehicleEntry() {
     vehicle: null,
     document: null,
   });
+
+  // Calculate total steps based on status
+  // If on_hold: skip product selection (step 5)
+  const totalSteps = formData.vehicleStatus === 'on_hold' ? 5 : 6;
+  
+  // Get actual step number for display
+  const getDisplayStep = (step: number) => {
+    if (formData.vehicleStatus === 'on_hold' && step >= 5) {
+      return step; // Step 5 becomes customer info
+    }
+    return step;
+  };
 
   const handlePhotoUpload = (type: 'vehicle' | 'document', file: File | null) => {
     if (file) {
@@ -120,7 +134,6 @@ export default function VehicleEntry() {
       let successMessages: string[] = [];
       let extractedVin = '';
       
-      // Extract all data from OCR response
       if (response.data.vin) {
         extractedVin = response.data.vin;
         updates.vin = extractedVin;
@@ -133,7 +146,6 @@ export default function VehicleEntry() {
         successMessages.push('Kundenname');
       }
       
-      // Add all other extracted vehicle data
       if (response.data.brand) {
         updates.brand = response.data.brand;
         successMessages.push('Marke');
@@ -163,7 +175,6 @@ export default function VehicleEntry() {
         setFormData((prev) => ({ ...prev, ...updates }));
         toast.success(`${successMessages.join(', ')} erfolgreich erkannt!`);
         
-        // Automatically decode VIN if it was extracted and we don't have all data from OCR
         if (extractedVin && extractedVin.length === 17 && (!response.data.brand || !response.data.model)) {
           try {
             const decodeResponse = await api.get(`/vehicles/decode/${extractedVin}`);
@@ -171,7 +182,6 @@ export default function VehicleEntry() {
             
             setFormData((prev) => ({
               ...prev,
-              // Only use decoded data if OCR didn't provide it
               brand: prev.brand || decodeData.vehicle?.make || decodeData.make || '',
               model: prev.model || decodeData.vehicle?.model || decodeData.model || '',
               year: prev.year || (decodeData.vehicle?.year || decodeData.year ? (decodeData.vehicle?.year || decodeData.year).toString() : ''),
@@ -180,7 +190,6 @@ export default function VehicleEntry() {
             
             toast.success('VIN automatisch dekodiert!');
           } catch (decodeError) {
-            // VIN decode failed, but that's okay - user can still proceed
             console.log('VIN decode failed:', decodeError);
           }
         }
@@ -229,7 +238,6 @@ export default function VehicleEntry() {
 
     setIsLoading(true);
     try {
-      // Create vehicle
       const vehicleData = {
         vin: formData.vin,
         brand: formData.brand || undefined,
@@ -243,7 +251,8 @@ export default function VehicleEntry() {
         customerName: formData.customerName || undefined,
         customerEmail: formData.customerEmail || undefined,
         customerPhone: formData.customerPhone || undefined,
-        isActive: false, // New cars start as "in work" status
+        status: formData.vehicleStatus,
+        isActive: true,
       };
 
       const vehicleResponse = await api.post('/vehicles', vehicleData);
@@ -268,22 +277,27 @@ export default function VehicleEntry() {
         });
       }
 
-      // Create expenses for selected Derendinger products
-      if (formData.selectedProducts.length > 0) {
+      // Only create expenses if status is active and products are selected
+      if (formData.vehicleStatus === 'active' && formData.selectedProducts.length > 0) {
         for (const product of formData.selectedProducts) {
           await api.post('/expenses', {
             vehicleId: vehicleId,
             description: `${product.quantity}x ${product.supplier} ${product.articleNumber} - ${product.categoryName}`,
             category: 'parts',
-            amount: (product.price || 25) * product.quantity, // Default price if not available
+            amount: (product.price || 25) * product.quantity,
             date: new Date().toISOString(),
             notes: `Derendinger Artikel-ID: ${product.id}`,
           });
         }
-        toast.success(`${formData.selectedProducts.length} Ersatzteile hinzugefügt!`);
+        toast.success(`${formData.selectedProducts.length} Ersatzteile bestellt!`);
       }
 
-      toast.success('Fahrzeug erfolgreich erfasst!');
+      if (formData.vehicleStatus === 'on_hold') {
+        toast.success('Fahrzeug erfasst - Offerte wird erstellt');
+      } else {
+        toast.success('Fahrzeug erfasst - Arbeiten können beginnen!');
+      }
+      
       navigate(`/vehicles/${vehicleId}`);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Fehler beim Erfassen des Fahrzeugs');
@@ -295,7 +309,7 @@ export default function VehicleEntry() {
   const canProceed = () => {
     switch (currentStep) {
       case 1:
-        return true; // Photos are optional
+        return true;
       case 2:
         return formData.vin.length === 17;
       case 3:
@@ -303,13 +317,28 @@ export default function VehicleEntry() {
       case 4:
         return formData.serviceType !== '';
       case 5:
-        return true; // Products are optional
+        // If on_hold: this is customer step
+        // If active: this is products step (always can proceed)
+        if (formData.vehicleStatus === 'on_hold') {
+          return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
+        }
+        return true;
       case 6:
+        // Only reached if active status
         return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
       default:
         return false;
     }
   };
+
+  const getStepLabels = () => {
+    if (formData.vehicleStatus === 'on_hold') {
+      return ['Fotos', 'VIN', 'Details', 'Service', 'Kunde'];
+    }
+    return ['Fotos', 'VIN', 'Details', 'Service', 'Teile', 'Kunde'];
+  };
+
+  const stepLabels = getStepLabels();
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -330,38 +359,34 @@ export default function VehicleEntry() {
         {/* Progress Steps */}
         <div className="card mb-6">
           <div className="flex items-center justify-between">
-            {[1, 2, 3, 4, 5, 6].map((step) => (
-              <div key={step} className="flex items-center flex-1">
-                <div className="flex flex-col items-center flex-1">
-                  <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${
-                      currentStep === step
-                        ? 'bg-primary-600 text-white'
-                        : currentStep > step
-                        ? 'bg-green-500 text-white'
-                        : 'bg-gray-200 text-gray-600'
-                    }`}
-                  >
-                    {currentStep > step ? <CheckCircle className="w-5 h-5" /> : step}
+            {stepLabels.map((label, index) => {
+              const step = index + 1;
+              return (
+                <div key={step} className="flex items-center flex-1">
+                  <div className="flex flex-col items-center flex-1">
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${
+                        currentStep === step
+                          ? 'bg-primary-600 text-white'
+                          : currentStep > step
+                          ? 'bg-green-500 text-white'
+                          : 'bg-gray-200 text-gray-600'
+                      }`}
+                    >
+                      {currentStep > step ? <CheckCircle className="w-5 h-5" /> : step}
+                    </div>
+                    <p className="text-xs mt-2 text-center text-gray-600">{label}</p>
                   </div>
-                  <p className="text-xs mt-2 text-center text-gray-600">
-                    {step === 1 && 'Fotos'}
-                    {step === 2 && 'VIN'}
-                    {step === 3 && 'Details'}
-                    {step === 4 && 'Service'}
-                    {step === 5 && 'Teile'}
-                    {step === 6 && 'Kunde'}
-                  </p>
+                  {step < totalSteps && (
+                    <div
+                      className={`flex-1 h-1 mx-2 ${
+                        currentStep > step ? 'bg-green-500' : 'bg-gray-200'
+                      }`}
+                    />
+                  )}
                 </div>
-                {step < 6 && (
-                  <div
-                    className={`flex-1 h-1 mx-2 ${
-                      currentStep > step ? 'bg-green-500' : 'bg-gray-200'
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -607,12 +632,70 @@ export default function VehicleEntry() {
             </div>
           )}
 
-          {/* Step 4: Service */}
+          {/* Step 4: Service + Status */}
           {currentStep === 4 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Schritt 4: Service auswählen</h2>
-                <p className="text-gray-600">Welche Arbeiten müssen durchgeführt werden?</p>
+                <h2 className="text-2xl font-bold mb-2">Schritt 4: Service & Status</h2>
+                <p className="text-gray-600">Welche Arbeiten und wann soll begonnen werden?</p>
+              </div>
+
+              {/* Vehicle Status Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Fahrzeug-Status *
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, vehicleStatus: 'active' }))}
+                    className={`p-4 rounded-xl border-2 text-left transition-all ${
+                      formData.vehicleStatus === 'active'
+                        ? 'border-green-500 bg-green-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        formData.vehicleStatus === 'active' ? 'bg-green-500' : 'bg-gray-200'
+                      }`}>
+                        <Play className={`w-5 h-5 ${formData.vehicleStatus === 'active' ? 'text-white' : 'text-gray-500'}`} />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-gray-900">Aktiv</div>
+                        <div className="text-xs text-gray-500">Sofort starten</div>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      Arbeiten können sofort beginnen. Ersatzteile werden automatisch bestellt.
+                    </p>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, vehicleStatus: 'on_hold', selectedProducts: [] }))}
+                    className={`p-4 rounded-xl border-2 text-left transition-all ${
+                      formData.vehicleStatus === 'on_hold'
+                        ? 'border-amber-500 bg-amber-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        formData.vehicleStatus === 'on_hold' ? 'bg-amber-500' : 'bg-gray-200'
+                      }`}>
+                        <Pause className={`w-5 h-5 ${formData.vehicleStatus === 'on_hold' ? 'text-white' : 'text-gray-500'}`} />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-gray-900">Wartend</div>
+                        <div className="text-xs text-gray-500">Offerte zuerst</div>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      Erst Offerte an Kunde senden. Nach Bestätigung wird das Fahrzeug aktiviert.
+                    </p>
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -657,8 +740,8 @@ export default function VehicleEntry() {
             </div>
           )}
 
-          {/* Step 5: Derendinger Products */}
-          {currentStep === 5 && (
+          {/* Step 5: Products (only if active) or Customer (if on_hold) */}
+          {currentStep === 5 && formData.vehicleStatus === 'active' && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold mb-2">Schritt 5: Ersatzteile auswählen</h2>
@@ -676,36 +759,41 @@ export default function VehicleEntry() {
             </div>
           )}
 
-          {/* Step 6: Customer Info */}
-          {currentStep === 6 && (
+          {/* Customer Info - Step 5 for on_hold, Step 6 for active */}
+          {((currentStep === 5 && formData.vehicleStatus === 'on_hold') || 
+            (currentStep === 6 && formData.vehicleStatus === 'active')) && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Schritt 5: Kundeninformationen</h2>
+                <h2 className="text-2xl font-bold mb-2">
+                  Schritt {formData.vehicleStatus === 'on_hold' ? 5 : 6}: Kundeninformationen
+                </h2>
                 <p className="text-gray-600">Kundendaten erfassen (aus Fahrzeugausweis)</p>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-blue-900">Kundenname automatisch erkennen</p>
-                    <p className="text-sm text-blue-700">Aus dem Fahrzeugausweis-Foto</p>
+              {formData.documentPhoto && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-blue-900">Kundenname automatisch erkennen</p>
+                      <p className="text-sm text-blue-700">Aus dem Fahrzeugausweis-Foto</p>
+                    </div>
+                    <button
+                      onClick={handleExtractVIN}
+                      disabled={isLoading}
+                      className="btn btn-primary"
+                    >
+                      {isLoading ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                          Erkenne...
+                        </>
+                      ) : (
+                        'VIN & Name erkennen'
+                      )}
+                    </button>
                   </div>
-                  <button
-                    onClick={handleExtractVIN}
-                    disabled={!formData.documentPhoto || isLoading}
-                    className="btn btn-primary"
-                  >
-                    {isLoading ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                        Erkenne...
-                      </>
-                    ) : (
-                      'VIN & Name erkennen'
-                    )}
-                  </button>
                 </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -746,6 +834,19 @@ export default function VehicleEntry() {
                   />
                 </div>
               </div>
+
+              {/* Status reminder */}
+              {formData.vehicleStatus === 'on_hold' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2">
+                    <Pause className="w-5 h-5 text-amber-600" />
+                    <p className="font-medium text-amber-900">Status: Wartend</p>
+                  </div>
+                  <p className="text-sm text-amber-700 mt-1">
+                    Das Fahrzeug wird im Status "Wartend" erfasst. Sie können dann eine Offerte erstellen und nach Kundenbestätigung die Teilebestellung vornehmen.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -760,7 +861,7 @@ export default function VehicleEntry() {
               Zurück
             </button>
 
-            {currentStep < 6 ? (
+            {currentStep < totalSteps ? (
               <button
                 onClick={() => setCurrentStep((prev) => prev + 1)}
                 disabled={!canProceed()}
@@ -773,7 +874,11 @@ export default function VehicleEntry() {
               <button
                 onClick={handleSubmit}
                 disabled={!canProceed() || isLoading}
-                className="btn btn-primary flex items-center gap-2 disabled:opacity-50"
+                className={`btn flex items-center gap-2 disabled:opacity-50 ${
+                  formData.vehicleStatus === 'on_hold' 
+                    ? 'bg-amber-500 hover:bg-amber-600 text-white' 
+                    : 'btn-primary'
+                }`}
               >
                 {isLoading ? (
                   <>
@@ -783,7 +888,7 @@ export default function VehicleEntry() {
                 ) : (
                   <>
                     <CheckCircle className="w-5 h-5" />
-                    Fahrzeug erfassen
+                    {formData.vehicleStatus === 'on_hold' ? 'Als Wartend erfassen' : 'Fahrzeug erfassen & Teile bestellen'}
                   </>
                 )}
               </button>
@@ -794,6 +899,3 @@ export default function VehicleEntry() {
     </div>
   );
 }
-
-
-

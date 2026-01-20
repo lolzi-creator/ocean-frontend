@@ -27,8 +27,8 @@ export default function DerendingerStatus({ compact = false }: DerendingerStatus
 
   useEffect(() => {
     checkConnection();
-    // Check every 5 minutes
-    const interval = setInterval(checkConnection, 5 * 60 * 1000);
+    // Check every 30 minutes (not too frequent)
+    const interval = setInterval(checkConnection, 30 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
