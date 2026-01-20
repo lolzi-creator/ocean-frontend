@@ -3,6 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Upload } from 'lucide-react';
+import DerendingerProductPicker from '../components/DerendingerProductPicker';
+
+interface SelectedProduct {
+  id: string;
+  articleNumber: string;
+  name: string;
+  description: string;
+  supplier: string;
+  brand: string;
+  stock: number;
+  price: number | null;
+  categoryName: string;
+  quantity: number;
+}
 
 interface StepData {
   // Step 1: Photos
@@ -24,6 +38,7 @@ interface StepData {
   // Step 4: Service Selection
   serviceType: string;
   workDescription: string;
+  selectedProducts: SelectedProduct[];
   
   // Step 5: Customer Info
   customerName: string;
@@ -57,6 +72,7 @@ export default function VehicleEntry() {
     mileage: '',
     serviceType: '',
     workDescription: '',
+    selectedProducts: [],
     customerName: '',
     customerEmail: '',
     customerPhone: '',
@@ -252,8 +268,23 @@ export default function VehicleEntry() {
         });
       }
 
+      // Create expenses for selected Derendinger products
+      if (formData.selectedProducts.length > 0) {
+        for (const product of formData.selectedProducts) {
+          await api.post('/expenses', {
+            vehicleId: vehicleId,
+            description: `${product.quantity}x ${product.supplier} ${product.articleNumber} - ${product.categoryName}`,
+            category: 'parts',
+            amount: (product.price || 25) * product.quantity, // Default price if not available
+            date: new Date().toISOString(),
+            notes: `Derendinger Artikel-ID: ${product.id}`,
+          });
+        }
+        toast.success(`${formData.selectedProducts.length} Ersatzteile hinzugefügt!`);
+      }
+
       toast.success('Fahrzeug erfolgreich erfasst!');
-      navigate('/vehicles');
+      navigate(`/vehicles/${vehicleId}`);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Fehler beim Erfassen des Fahrzeugs');
     } finally {
@@ -272,6 +303,8 @@ export default function VehicleEntry() {
       case 4:
         return formData.serviceType !== '';
       case 5:
+        return true; // Products are optional
+      case 6:
         return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
       default:
         return false;
@@ -297,11 +330,11 @@ export default function VehicleEntry() {
         {/* Progress Steps */}
         <div className="card mb-6">
           <div className="flex items-center justify-between">
-            {[1, 2, 3, 4, 5].map((step) => (
+            {[1, 2, 3, 4, 5, 6].map((step) => (
               <div key={step} className="flex items-center flex-1">
                 <div className="flex flex-col items-center flex-1">
                   <div
-                    className={`w-12 h-12 rounded-full flex items-center justify-center font-bold ${
+                    className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${
                       currentStep === step
                         ? 'bg-primary-600 text-white'
                         : currentStep > step
@@ -309,17 +342,18 @@ export default function VehicleEntry() {
                         : 'bg-gray-200 text-gray-600'
                     }`}
                   >
-                    {currentStep > step ? <CheckCircle className="w-6 h-6" /> : step}
+                    {currentStep > step ? <CheckCircle className="w-5 h-5" /> : step}
                   </div>
                   <p className="text-xs mt-2 text-center text-gray-600">
                     {step === 1 && 'Fotos'}
                     {step === 2 && 'VIN'}
                     {step === 3 && 'Details'}
                     {step === 4 && 'Service'}
-                    {step === 5 && 'Kunde'}
+                    {step === 5 && 'Teile'}
+                    {step === 6 && 'Kunde'}
                   </p>
                 </div>
-                {step < 5 && (
+                {step < 6 && (
                   <div
                     className={`flex-1 h-1 mx-2 ${
                       currentStep > step ? 'bg-green-500' : 'bg-gray-200'
@@ -623,8 +657,27 @@ export default function VehicleEntry() {
             </div>
           )}
 
-          {/* Step 5: Customer Info */}
+          {/* Step 5: Derendinger Products */}
           {currentStep === 5 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Schritt 5: Ersatzteile auswählen</h2>
+                <p className="text-gray-600">Passende Teile für Ihr Fahrzeug von Derendinger</p>
+              </div>
+
+              <DerendingerProductPicker
+                vin={formData.vin}
+                serviceType={formData.serviceType}
+                selectedProducts={formData.selectedProducts}
+                onProductsSelected={(products) => 
+                  setFormData((prev) => ({ ...prev, selectedProducts: products }))
+                }
+              />
+            </div>
+          )}
+
+          {/* Step 6: Customer Info */}
+          {currentStep === 6 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold mb-2">Schritt 5: Kundeninformationen</h2>
@@ -707,7 +760,7 @@ export default function VehicleEntry() {
               Zurück
             </button>
 
-            {currentStep < 5 ? (
+            {currentStep < 6 ? (
               <button
                 onClick={() => setCurrentStep((prev) => prev + 1)}
                 disabled={!canProceed()}

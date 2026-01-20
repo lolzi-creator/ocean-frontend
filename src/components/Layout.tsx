@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import DerendingerStatus from './DerendingerStatus';
 import {
   Car,
   Clock,
@@ -72,6 +73,9 @@ export default function Layout({ children }: LayoutProps) {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            {/* Derendinger Connection Status */}
+            <DerendingerStatus />
+            
             <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-gradient-to-r from-primary-50 to-blue-50 border border-primary-100">
               <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-md">
                 <User className="w-5 h-5 text-white" />
@@ -106,6 +110,8 @@ export default function Layout({ children }: LayoutProps) {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            {/* Derendinger Status - Compact on mobile */}
+            <DerendingerStatus compact />
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-md">
               <User className="w-5 h-5 text-white" />
             </div>
