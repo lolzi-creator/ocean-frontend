@@ -18,6 +18,7 @@ import Dashboard from './pages/Dashboard';
 import Invoices from './pages/Invoices';
 import InvoiceDetail from './pages/InvoiceDetail';
 import Expenses from './pages/Expenses';
+import ServiceTemplates from './pages/ServiceTemplates';
 import WorkerSelection from './pages/WorkerSelection';
 
 function App() {
@@ -179,6 +180,16 @@ function App() {
               <ProtectedRoute requireAdmin>
                 <Layout>
                   <Expenses />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/service-templates"
+            element={
+              <ProtectedRoute requireAdmin>
+                <Layout>
+                  <ServiceTemplates />
                 </Layout>
               </ProtectedRoute>
             }

@@ -264,8 +264,8 @@ export default function VehicleDetail() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Car className="w-8 h-8 text-primary-600 animate-pulse" />
       </div>
     );
   }
@@ -275,30 +275,32 @@ export default function VehicleDetail() {
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Header */}
-      <div className="mb-6">
+      <div>
         <button
           onClick={() => navigate('/vehicles')}
-          className="mb-4 flex items-center gap-2 text-gray-600 hover:text-gray-900"
+          className="mb-3 flex items-center gap-1.5 text-sm text-neutral-500 hover:text-neutral-700"
         >
-          <ArrowLeft className="w-5 h-5" />
-          Zurück zu Fahrzeugen
+          <ArrowLeft className="w-4 h-4" />
+          Zurück
         </button>
         <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {vehicle.brand && vehicle.model
-                ? `${vehicle.brand} ${vehicle.model}`
-                : 'Fahrzeug'}
-            </h1>
-            <p className="text-gray-600 mt-1">VIN: {vehicle.vin}</p>
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-primary-100 rounded-xl flex items-center justify-center">
+              <Car className="w-6 h-6 text-primary-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-neutral-900">
+                {vehicle.brand && vehicle.model ? `${vehicle.brand} ${vehicle.model}` : 'Fahrzeug'}
+              </h1>
+              <p className="text-sm text-neutral-500">
+                <code className="bg-neutral-100 px-1.5 py-0.5 rounded">{vehicle.vin}</code>
+              </p>
+            </div>
           </div>
-          <Link
-            to={`/vehicles?edit=${vehicle.id}`}
-            className="btn btn-primary flex items-center gap-2"
-          >
-            <Edit className="w-5 h-5" />
+          <Link to={`/vehicles?edit=${vehicle.id}`} className="btn btn-secondary">
+            <Edit className="w-4 h-4" />
             Bearbeiten
           </Link>
         </div>
@@ -387,29 +389,55 @@ export default function VehicleDetail() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-              <Clock className="w-6 h-6 text-primary-600" />
+            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+              <Clock className="w-5 h-5 text-primary-600" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Gesamtstunden</p>
-              <p className="text-2xl font-bold text-gray-900">{totalHours.toFixed(1)}h</p>
+              <p className="text-2xl font-bold text-neutral-900">{totalHours.toFixed(1)}h</p>
+              <p className="text-xs text-neutral-500">Stunden</p>
             </div>
           </div>
         </div>
         <div className="card">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <FileText className="w-6 h-6 text-green-600" />
+            <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
+              <FileText className="w-5 h-5 text-success-600" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Zeiteinträge</p>
-              <p className="text-2xl font-bold text-gray-900">{timeLogs.length}</p>
+              <p className="text-2xl font-bold text-neutral-900">{timeLogs.length}</p>
+              <p className="text-xs text-neutral-500">Einträge</p>
             </div>
           </div>
         </div>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-warning-100 rounded-lg flex items-center justify-center">
+              <DollarSign className="w-5 h-5 text-warning-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">CHF {totalRevenue.toFixed(0)}</p>
+              <p className="text-xs text-neutral-500">Einnahmen</p>
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-danger-100 rounded-lg flex items-center justify-center">
+              <Package className="w-5 h-5 text-danger-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">CHF {totalExpenses.toFixed(0)}</p>
+              <p className="text-xs text-neutral-500">Ausgaben</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Stats - now unused but keeping structure */}
+      <div className="hidden grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="card">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">

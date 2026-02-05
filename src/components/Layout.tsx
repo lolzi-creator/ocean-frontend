@@ -10,8 +10,9 @@ import {
   User,
   Calendar,
   Play,
-  TrendingUp,
+  LayoutDashboard,
   DollarSign,
+  Settings,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -19,152 +20,150 @@ interface LayoutProps {
 }
 
 export default function Layout({ children }: LayoutProps) {
-  const { user, currentWorker, logout } = useAuth();
+  const { user, currentWorker } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Use currentWorker if available, otherwise fall back to user
   const activeUser = currentWorker || user;
   const userRole = activeUser?.role || 'worker';
 
   const handleLogout = () => {
-    // Clear current worker but keep firm login
     localStorage.removeItem('currentWorker');
     localStorage.removeItem('workerToken');
-    // Navigate to worker selection instead of full logout
     navigate('/worker-selection');
   };
 
-  // Navigation items based on role
   const allNavItems = [
-    { path: '/dashboard', icon: TrendingUp, label: 'Dashboard', adminOnly: true },
+    { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', adminOnly: true },
     { path: '/check-in', icon: Play, label: 'Check-In', adminOnly: false },
     { path: '/vehicles', icon: Car, label: 'Fahrzeuge', adminOnly: false },
-    { path: '/time-logs', icon: Clock, label: 'Zeiterfassung', adminOnly: false },
+    { path: '/time-logs', icon: Clock, label: 'Zeiten', adminOnly: false },
     { path: '/appointments/calendar', icon: Calendar, label: 'Termine', adminOnly: false },
     { path: '/invoices', icon: FileText, label: 'Rechnungen', adminOnly: true },
     { path: '/expenses', icon: DollarSign, label: 'Ausgaben', adminOnly: true },
+    { path: '/service-templates', icon: Settings, label: 'Services', adminOnly: true },
   ];
 
-  // Filter nav items based on role
   const navItems = allNavItems.filter(item => 
     userRole === 'admin' || !item.adminOnly
   );
 
+  const isActivePath = (path: string) => {
+    if (path === '/vehicles') return location.pathname.startsWith('/vehicles');
+    if (path === '/time-logs') return location.pathname.startsWith('/time-logs');
+    if (path === '/appointments/calendar') return location.pathname.startsWith('/appointments');
+    return location.pathname === path;
+  };
+
   return (
-    <div className="min-h-screen flex flex-col pb-20 md:pb-24">
-      {/* Top Header - Desktop only */}
-      <header className="hidden md:block sticky top-0 z-30 glass border-b border-gray-200/50 shadow-sm backdrop-blur-md">
-        <div className="flex items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="absolute inset-0 bg-primary-500/20 blur-xl rounded-full" />
-              <img
-                src="/logo.webp"
-                alt="Ocean Garage"
-                className="w-12 h-12 object-contain relative z-10 drop-shadow-lg"
-              />
+    <div className="min-h-screen flex flex-col bg-neutral-50 pb-20 md:pb-20">
+      {/* Desktop Header */}
+      <header className="hidden md:block sticky top-0 z-30 glass">
+        <div className="max-w-7xl mx-auto flex items-center justify-between h-16 px-6">
+          {/* Logo */}
+          <Link to="/dashboard" className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-primary-600 rounded-lg flex items-center justify-center">
+              <Car className="w-5 h-5 text-white" strokeWidth={2} />
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">
-                Ocean Garage
-              </h1>
-              <p className="text-xs text-gray-500 font-medium">Verwaltungssystem</p>
+              <span className="text-lg font-bold text-neutral-900">Ocean Garage</span>
             </div>
-          </div>
-          <div className="flex items-center gap-4">
-            {/* Derendinger Connection Status */}
+          </Link>
+
+          {/* Right side */}
+          <div className="flex items-center gap-3">
             <DerendingerStatus />
             
-            <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-gradient-to-r from-primary-50 to-blue-50 border border-primary-100">
-              <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-md">
-                <User className="w-5 h-5 text-white" />
+            <div className="h-8 w-px bg-neutral-200" />
+            
+            {/* User */}
+            <div className="flex items-center gap-2 pl-2">
+              <div className="w-8 h-8 bg-neutral-200 rounded-lg flex items-center justify-center">
+                <User className="w-4 h-4 text-neutral-600" />
               </div>
-              <div className="text-left">
-                <p className="font-semibold text-gray-900 text-sm">{activeUser?.name || activeUser?.email}</p>
-                <p className="text-xs text-gray-500 capitalize font-medium">{userRole}</p>
+              <div className="text-left hidden lg:block">
+                <p className="text-sm font-semibold text-neutral-900 leading-tight">
+                  {activeUser?.name || activeUser?.email?.split('@')[0]}
+                </p>
+                <p className="text-xs text-neutral-500 capitalize">{userRole}</p>
               </div>
             </div>
+
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-gray-700 hover:bg-red-50 hover:text-red-600 transition-all duration-200 font-medium text-sm hover:shadow-md"
+              className="p-2 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 
+                       rounded-lg transition-colors"
+              title="Abmelden"
             >
-              <LogOut className="w-4 h-4" />
-              <span>Abmelden</span>
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Mobile Top Bar - Simple */}
-      <header className="md:hidden sticky top-0 z-30 glass border-b border-gray-200/50 backdrop-blur-md">
-        <div className="flex items-center justify-between px-4 py-3">
+      {/* Mobile Header */}
+      <header className="md:hidden sticky top-0 z-30 glass">
+        <div className="flex items-center justify-between h-14 px-4">
+          <Link to="/dashboard" className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
+              <Car className="w-4 h-4 text-white" strokeWidth={2} />
+            </div>
+            <span className="text-base font-bold text-neutral-900">Ocean Garage</span>
+          </Link>
           <div className="flex items-center gap-2">
-            <img
-              src="/logo.webp"
-              alt="Ocean Garage"
-              className="w-10 h-10 object-contain drop-shadow-md"
-            />
-            <h1 className="text-lg font-bold bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">
-              Ocean Garage
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Derendinger Status - Compact on mobile */}
             <DerendingerStatus compact />
-            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-md">
-              <User className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 bg-neutral-200 rounded-lg flex items-center justify-center">
+              <User className="w-4 h-4 text-neutral-600" />
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 md:p-6 lg:p-8 animate-fade-in">{children}</main>
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 md:px-6 animate-fade-in">
+        {children}
+      </main>
 
-      {/* Bottom Navigation Bar */}
-      <nav className="fixed bottom-0 left-0 right-0 glass border-t border-gray-200/50 shadow-2xl z-40 md:z-30 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-2 sm:px-4">
-          <div className="flex items-center justify-around md:justify-center md:gap-2">
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-neutral-200">
+        <div className="max-w-7xl mx-auto px-2">
+          <div className="flex items-center justify-around md:justify-center md:gap-1 h-16">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path || 
-                (item.path === '/vehicles' && location.pathname.startsWith('/vehicles')) ||
-                (item.path === '/time-logs' && location.pathname.startsWith('/time-logs')) ||
-                (item.path === '/appointments/calendar' && location.pathname.startsWith('/appointments'));
+              const isActive = isActivePath(item.path);
+              
               return (
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`group flex flex-col items-center justify-center gap-1 px-4 py-3 md:px-6 md:py-3 rounded-2xl transition-all duration-300 min-w-[70px] md:min-w-[100px] relative ${
+                  className={`flex flex-col items-center justify-center gap-0.5
+                            px-3 py-1.5 rounded-lg min-w-[60px] md:min-w-[80px]
+                            transition-colors duration-200 ${
                     isActive
-                      ? 'text-primary-600 bg-gradient-to-br from-primary-50 to-blue-50 shadow-lg scale-105'
-                      : 'text-gray-600 hover:text-primary-600 hover:bg-gray-50/50'
+                      ? 'text-primary-600 bg-primary-50'
+                      : 'text-neutral-400 hover:text-neutral-600 hover:bg-neutral-50'
                   }`}
                 >
-                  {isActive && (
-                    <div className="absolute inset-0 bg-gradient-to-br from-primary-500/10 to-blue-500/10 rounded-2xl blur-sm" />
-                  )}
-                  <div className="relative z-10">
-                    <Icon className={`w-5 h-5 md:w-6 md:h-6 transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
-                  </div>
-                  <span className={`text-xs md:text-sm font-semibold relative z-10 transition-all duration-300 ${isActive ? 'text-primary-700' : 'text-gray-600 group-hover:text-primary-600'}`}>
+                  <Icon className="w-5 h-5" strokeWidth={isActive ? 2.5 : 2} />
+                  <span className={`text-[10px] md:text-xs font-medium ${
+                    isActive ? 'text-primary-600' : 'text-neutral-500'
+                  }`}>
                     {item.label}
                   </span>
-                  {isActive && (
-                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 bg-primary-600 rounded-full" />
-                  )}
                 </Link>
               );
             })}
             
-            {/* Logout button on mobile */}
+            {/* Mobile logout */}
             <button
               onClick={handleLogout}
-              className="md:hidden flex flex-col items-center justify-center gap-1 px-4 py-3 rounded-2xl text-gray-600 hover:text-red-600 hover:bg-red-50/50 transition-all duration-300 min-w-[70px] group"
+              className="md:hidden flex flex-col items-center justify-center gap-0.5
+                       px-3 py-1.5 rounded-lg min-w-[60px]
+                       text-neutral-400 hover:text-danger-600 hover:bg-danger-50
+                       transition-colors duration-200"
             >
-              <LogOut className="w-5 h-5 transition-transform duration-300 group-hover:scale-110" />
-              <span className="text-xs font-semibold">Abmelden</span>
+              <LogOut className="w-5 h-5" strokeWidth={2} />
+              <span className="text-[10px] font-medium text-neutral-500">Logout</span>
             </button>
           </div>
         </div>

@@ -2,8 +2,17 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Plus, DollarSign, Edit, Trash2, X, Car, Filter, ChevronDown, ChevronUp, Users, Settings } from 'lucide-react';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays } from 'date-fns';
+import { Plus, DollarSign, Edit, Trash2, X, Car, ChevronDown, ChevronUp, Users, Settings } from 'lucide-react';
+import { format } from 'date-fns';
+import { useDateFilter, useVehicles } from '../hooks';
+
+// Partial vehicle info returned in expense response
+interface ExpenseVehicle {
+  id: string;
+  vin: string;
+  brand?: string;
+  model?: string;
+}
 
 interface Expense {
   id: string;
@@ -24,13 +33,6 @@ interface Expense {
     email: string;
   };
   createdAt: string;
-}
-
-interface Vehicle {
-  id: string;
-  vin: string;
-  brand?: string;
-  model?: string;
 }
 
 interface WorkerSalary {
@@ -59,7 +61,6 @@ const categories = [
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [workers, setWorkers] = useState<User[]>([]);
   const [salaries, setSalaries] = useState<WorkerSalary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,7 +71,6 @@ export default function Expenses() {
   const [filterType, setFilterType] = useState<string>('both'); // 'workers', 'cars', 'both'
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterVehicle, setFilterVehicle] = useState<string>('all');
-  const [filterPeriod, setFilterPeriod] = useState<string>('all');
   const [groupByVehicle, setGroupByVehicle] = useState<boolean>(true);
   const [expandedVehicles, setExpandedVehicles] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
@@ -82,11 +82,12 @@ export default function Expenses() {
     vehicleId: '',
   });
 
+  // Use shared hooks
+  const { filterPeriod, setFilterPeriod, dateRange } = useDateFilter('all');
+  const { activeVehicles: vehicles } = useVehicles();
+
   useEffect(() => {
-    fetchExpenses();
-    fetchVehicles();
     fetchWorkers();
-    fetchSalaries();
   }, []);
 
   useEffect(() => {
@@ -96,32 +97,14 @@ export default function Expenses() {
 
   const fetchExpenses = async () => {
     try {
-      const params: any = {};
+      const params: Record<string, string> = {};
       if (filterCategory !== 'all') params.category = filterCategory;
       if (filterVehicle !== 'all') params.vehicleId = filterVehicle;
-      
-      // Add date filters based on period
-      if (filterPeriod !== 'all') {
-        const now = new Date();
-        let startDate: Date;
-        let endDate: Date = now;
-        
-        if (filterPeriod === 'week') {
-          startDate = startOfWeek(now, { weekStartsOn: 1 }); // Monday
-          endDate = endOfWeek(now, { weekStartsOn: 1 });
-        } else if (filterPeriod === 'month') {
-          startDate = startOfMonth(now);
-          endDate = endOfMonth(now);
-        } else if (filterPeriod === 'year') {
-          startDate = startOfYear(now);
-          endDate = endOfYear(now);
-        } else {
-          startDate = startOfWeek(now, { weekStartsOn: 1 });
-          endDate = endOfWeek(now, { weekStartsOn: 1 });
-        }
-        
-        params.startDate = format(startDate, 'yyyy-MM-dd');
-        params.endDate = format(endDate, 'yyyy-MM-dd');
+
+      // Use date range from hook
+      if (dateRange.startDate && dateRange.endDate) {
+        params.startDate = format(dateRange.startDate, 'yyyy-MM-dd');
+        params.endDate = format(dateRange.endDate, 'yyyy-MM-dd');
       }
 
       const response = await api.get('/expenses', { params });
@@ -130,15 +113,6 @@ export default function Expenses() {
       toast.error('Ausgaben konnten nicht geladen werden');
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const fetchVehicles = async () => {
-    try {
-      const response = await api.get('/vehicles');
-      setVehicles(response.data.filter((v: any) => v.isActive !== false));
-    } catch (error) {
-      toast.error('Fahrzeuge konnten nicht geladen werden');
     }
   };
 
@@ -281,7 +255,7 @@ export default function Expenses() {
     acc[vehicleId].expenses.push(exp);
     acc[vehicleId].total += exp.amount;
     return acc;
-  }, {} as Record<string, { vehicle: Vehicle | null; vehicleKey: string; expenses: Expense[]; total: number }>);
+  }, {} as Record<string, { vehicle: ExpenseVehicle | null; vehicleKey: string; expenses: Expense[]; total: number }>);
 
   const getCategoryLabel = (category: string) => {
     return categories.find((c) => c.value === category)?.label || category;
@@ -320,149 +294,117 @@ export default function Expenses() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-2">
-            Ausgaben
-          </h1>
-          <p className="text-gray-600 font-medium">Verwalten Sie Ihre Betriebsausgaben</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Ausgaben</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">
+            {expenses.length} Einträge • CHF {totalAll.toFixed(0)}
+          </p>
         </div>
         <button
-          onClick={() => {
-            resetForm();
-            setShowModal(true);
-          }}
-          className="btn btn-primary flex items-center gap-2 self-start lg:self-auto shadow-lg hover:shadow-xl"
+          onClick={() => { resetForm(); setShowModal(true); }}
+          className="btn btn-primary"
         >
-          <Plus className="w-5 h-5" />
-          <span>Ausgabe hinzufügen</span>
+          <Plus className="w-4 h-4" />
+          Neue Ausgabe
         </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="stat-card border-l-4 border-red-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Gesamt Ausgaben</p>
-              <p className="text-3xl font-bold text-red-600">CHF {totalAll.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">
-                {filterType === 'both' && `${expenses.length} Ausgaben + ${salaries.length} Gehälter`}
-                {filterType === 'cars' && `${expenses.length} Ausgaben`}
-                {filterType === 'workers' && `${salaries.length} Gehälter`}
-              </p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-danger-100 rounded-lg flex items-center justify-center">
+              <DollarSign className="w-5 h-5 text-danger-600" />
             </div>
-            <div className="w-14 h-14 bg-gradient-to-br from-red-500 to-red-600 rounded-xl flex items-center justify-center shadow-lg">
-              <DollarSign className="w-7 h-7 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">CHF {totalAll.toFixed(0)}</p>
+              <p className="text-xs text-neutral-500">Gesamt</p>
             </div>
           </div>
         </div>
 
         {filterType === 'both' || filterType === 'workers' ? (
-          <div className="stat-card border-l-4 border-blue-500">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">Gehälter</p>
-                <p className="text-3xl font-bold text-blue-600">CHF {totalSalaries.toFixed(2)}</p>
-                <p className="text-xs text-gray-500 mt-1">{salaries.length} Mitarbeiter</p>
+          <div className="card">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                <Users className="w-5 h-5 text-primary-600" />
               </div>
-              <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-                <Users className="w-7 h-7 text-white" />
+              <div>
+                <p className="text-2xl font-bold text-neutral-900">CHF {totalSalaries.toFixed(0)}</p>
+                <p className="text-xs text-neutral-500">Gehälter</p>
               </div>
             </div>
           </div>
         ) : null}
 
         {(filterType === 'both' || filterType === 'cars') && Object.entries(expensesByCategory).slice(0, filterType === 'both' ? 2 : 3).map(([category, amount]) => (
-
-          <div key={category} className="stat-card border-l-4 border-primary-500">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600 mb-1">{getCategoryLabel(category)}</p>
-                <p className="text-3xl font-bold text-gray-900">CHF {amount.toFixed(2)}</p>
+          <div key={category} className="card">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
+                <DollarSign className="w-5 h-5 text-neutral-600" />
               </div>
-              <div className={`w-14 h-14 bg-gradient-to-br ${getCategoryColor(category)} rounded-xl flex items-center justify-center shadow-lg`}>
-                <DollarSign className="w-7 h-7 text-white" />
+              <div>
+                <p className="text-2xl font-bold text-neutral-900">CHF {amount.toFixed(0)}</p>
+                <p className="text-xs text-neutral-500">{getCategoryLabel(category)}</p>
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Quick Filters */}
-      <div className="card-elevated">
-        <div className="flex flex-wrap gap-3 items-center mb-4">
-          <span className="text-sm font-semibold text-gray-700">Anzeigen:</span>
-          <button
-            onClick={() => setFilterType('both')}
-            className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 ${
-              filterType === 'both'
-                ? 'bg-primary-600 text-white shadow-lg'
-                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-            }`}
-          >
-            Beide
-          </button>
-          <button
-            onClick={() => setFilterType('workers')}
-            className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 flex items-center gap-2 ${
-              filterType === 'workers'
-                ? 'bg-primary-600 text-white shadow-lg'
-                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            Mitarbeiter
-          </button>
-          <button
-            onClick={() => setFilterType('cars')}
-            className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 flex items-center gap-2 ${
-              filterType === 'cars'
-                ? 'bg-primary-600 text-white shadow-lg'
-                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-            }`}
-          >
-            <Car className="w-4 h-4" />
-            Fahrzeuge
-          </button>
-        </div>
+      {/* Filters */}
+      <div className="card p-4">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex gap-1 bg-neutral-100 p-1 rounded-lg">
+            {[
+              { value: 'both', label: 'Alle' },
+              { value: 'workers', label: 'Gehälter', icon: Users },
+              { value: 'cars', label: 'Fahrzeuge', icon: Car },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFilterType(opt.value)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  filterType === opt.value
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                {opt.icon && <opt.icon className="w-3 h-3" />}
+                {opt.label}
+              </button>
+            ))}
+          </div>
 
-        {(filterType === 'both' || filterType === 'cars') && (
-          <div className="flex flex-wrap gap-4 items-end border-t border-gray-200 pt-4 mt-4">
-            <div className="flex-1 min-w-[150px]">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Kategorie</label>
+          {(filterType === 'both' || filterType === 'cars') && (
+            <>
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
-                className="input"
+                className="input w-36 text-sm"
               >
                 <option value="all">Alle Kategorien</option>
                 {categories.map((cat) => (
-                  <option key={cat.value} value={cat.value}>
-                    {cat.label}
-                  </option>
+                  <option key={cat.value} value={cat.value}>{cat.label}</option>
                 ))}
               </select>
-            </div>
-            <div className="flex-1 min-w-[150px]">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Fahrzeug</label>
               <select
                 value={filterVehicle}
                 onChange={(e) => setFilterVehicle(e.target.value)}
-                className="input"
+                className="input w-40 text-sm"
               >
                 <option value="all">Alle Fahrzeuge</option>
                 {vehicles.map((vehicle) => (
                   <option key={vehicle.id} value={vehicle.id}>
-                    {vehicle.brand && vehicle.model
-                      ? `${vehicle.brand} ${vehicle.model}`
-                      : vehicle.vin}
+                    {vehicle.brand && vehicle.model ? `${vehicle.brand} ${vehicle.model}` : vehicle.vin}
                   </option>
                 ))}
               </select>
-            </div>
+            </>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => setFilterPeriod('week')}
@@ -505,6 +447,7 @@ export default function Expenses() {
               Gesamt
             </button>
           </div>
+          {(filterType === 'both' || filterType === 'cars') && (
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -516,8 +459,8 @@ export default function Expenses() {
                 <span className="text-sm font-semibold text-gray-700">Nach Fahrzeug gruppieren</span>
               </label>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Worker Salaries Section */}

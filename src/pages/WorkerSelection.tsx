@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { User, Lock, LogOut } from 'lucide-react';
+import { User, Lock, LogOut, Car, Loader2 } from 'lucide-react';
 
 interface Worker {
   id: string;
@@ -31,7 +31,6 @@ export default function WorkerSelection() {
       setWorkers(response.data || []);
     } catch (error) {
       toast.error('Mitarbeiter konnten nicht geladen werden');
-      console.error('Error fetching workers:', error);
     } finally {
       setIsLoadingWorkers(false);
     }
@@ -44,53 +43,38 @@ export default function WorkerSelection() {
 
   const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (!pin || pin.length !== 4) {
-      toast.error('Bitte geben Sie einen 4-stelligen PIN ein');
+      toast.error('Bitte 4-stelligen PIN eingeben');
       return;
     }
 
     setIsLoading(true);
     try {
-      // Send both PIN and userId to ensure we verify the correct worker
       const response = await api.post('/auth/verify-pin', { 
         pin,
         userId: selectedWorker?.id 
       });
       const verifiedUser = response.data.user;
 
-      // Verify that the PIN matches the selected worker
       if (selectedWorker && verifiedUser.id !== selectedWorker.id) {
-        toast.error('PIN stimmt nicht mit dem ausgewählten Mitarbeiter überein');
+        toast.error('PIN stimmt nicht überein');
         setPin('');
         return;
       }
 
-      // Set the current worker in context (this also saves to localStorage immediately)
       setCurrentWorker(verifiedUser);
-      
-      // Double-check that localStorage is set
       localStorage.setItem('currentWorker', JSON.stringify(verifiedUser));
-      
-      // Also set the worker ID as a token for API calls (since workers don't have Supabase tokens)
-      // The backend will accept this as an alternative authentication method
       localStorage.setItem('workerToken', verifiedUser.id);
 
-      // Small delay to ensure React state is updated and localStorage is synced
-      // This prevents race conditions with ProtectedRoute checking the state
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      // Navigate based on role - use window.location for more reliable navigation
       if (verifiedUser.role === 'admin') {
         window.location.href = '/dashboard';
       } else {
         window.location.href = '/check-in';
       }
-      
-      // Don't show toast here as we're navigating away
     } catch (error: any) {
-      const errorMessage = error.response?.data?.message || 'Ungültiger PIN';
-      toast.error(errorMessage);
+      toast.error(error.response?.data?.message || 'Ungültiger PIN');
       setPin('');
     } finally {
       setIsLoading(false);
@@ -98,7 +82,6 @@ export default function WorkerSelection() {
   };
 
   const handleFullLogout = () => {
-    // Full logout - clear everything and go to firm login
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('currentWorker');
@@ -108,88 +91,89 @@ export default function WorkerSelection() {
 
   if (isLoadingWorkers) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-blue-50">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-primary-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Lade Mitarbeiter...</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <Loader2 className="w-8 h-8 text-primary-600 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-blue-50 p-4">
-      <div className="w-full max-w-2xl">
-        <div className="card-elevated p-8">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-50 p-4">
+      <div className="w-full max-w-lg">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 bg-primary-600 rounded-lg flex items-center justify-center">
+              <Car className="w-5 h-5 text-white" strokeWidth={2} />
+            </div>
+            <span className="text-xl font-bold text-neutral-900">Ocean Garage</span>
+          </div>
+        </div>
+
+        <div className="card p-6">
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Mitarbeiter auswählen</h1>
-              <p className="text-gray-600">Wählen Sie einen Mitarbeiter und geben Sie den PIN ein</p>
+              <h1 className="text-xl font-bold text-neutral-900">Mitarbeiter wählen</h1>
+              <p className="text-sm text-neutral-500">Wählen Sie Ihr Profil</p>
             </div>
             <button
               onClick={handleFullLogout}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-gray-700 hover:bg-red-50 hover:text-red-600 transition-colors"
-              title="Vollständig abmelden"
+              className="p-2 text-neutral-400 hover:text-danger-600 hover:bg-danger-50 rounded-lg transition-colors"
+              title="Abmelden"
             >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Abmelden</span>
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
 
-          {/* Worker Selection */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Mitarbeiter
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {workers.map((worker) => (
-                <button
-                  key={worker.id}
-                  onClick={() => handleWorkerSelect(worker)}
-                  className={`p-4 rounded-xl border-2 transition-all duration-200 text-left ${
+          {/* Worker Grid */}
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            {workers.map((worker) => (
+              <button
+                key={worker.id}
+                onClick={() => handleWorkerSelect(worker)}
+                className={`p-4 rounded-xl border-2 transition-all duration-200 text-left ${
+                  selectedWorker?.id === worker.id
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
                     selectedWorker?.id === worker.id
-                      ? 'border-primary-500 bg-primary-50 shadow-md'
-                      : 'border-gray-200 hover:border-primary-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                      selectedWorker?.id === worker.id
-                        ? 'bg-primary-500'
-                        : 'bg-gray-200'
-                    }`}>
-                      <User className={`w-6 h-6 ${
-                        selectedWorker?.id === worker.id ? 'text-white' : 'text-gray-600'
-                      }`} />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-semibold text-gray-900">{worker.name}</p>
-                      <p className="text-xs text-gray-500 capitalize">{worker.role}</p>
-                    </div>
+                      ? 'bg-primary-600'
+                      : 'bg-neutral-200'
+                  }`}>
+                    <User className={`w-5 h-5 ${
+                      selectedWorker?.id === worker.id ? 'text-white' : 'text-neutral-500'
+                    }`} />
                   </div>
-                </button>
-              ))}
-            </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-neutral-900 text-sm truncate">{worker.name}</p>
+                    <p className="text-xs text-neutral-500 capitalize">{worker.role}</p>
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
 
           {/* PIN Input */}
           {selectedWorker && (
             <form onSubmit={handlePinSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                   PIN für {selectedWorker.name}
                 </label>
                 <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
                   <input
                     type="password"
                     inputMode="numeric"
                     maxLength={4}
                     value={pin}
                     onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                    placeholder="1234"
-                    className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition-all text-center text-2xl font-mono tracking-widest"
+                    placeholder="••••"
+                    className="input pl-10 text-center text-xl font-mono tracking-[0.5em]"
                     autoFocus
                   />
                 </div>
@@ -197,16 +181,20 @@ export default function WorkerSelection() {
               <button
                 type="submit"
                 disabled={isLoading || pin.length !== 4}
-                className="w-full btn btn-primary py-3 text-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full btn btn-primary"
               >
-                {isLoading ? 'Wird verifiziert...' : 'Anmelden'}
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  'Anmelden'
+                )}
               </button>
             </form>
           )}
 
           {!selectedWorker && (
-            <div className="text-center py-8 text-gray-500">
-              <p>Bitte wählen Sie zuerst einen Mitarbeiter aus</p>
+            <div className="text-center py-6 text-neutral-400 text-sm">
+              Bitte wählen Sie einen Mitarbeiter
             </div>
           )}
         </div>
@@ -214,4 +202,3 @@ export default function WorkerSelection() {
     </div>
   );
 }
-

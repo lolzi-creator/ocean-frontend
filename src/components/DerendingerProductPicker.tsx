@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../lib/api';
-import { Package, Check, Loader2, ShoppingCart, AlertCircle, Sparkles, Hand, ChevronDown, ChevronUp } from 'lucide-react';
+import { Package, Check, Loader2, ShoppingCart, AlertCircle, Sparkles, Hand, ChevronDown, ChevronUp, ExternalLink, CheckCircle } from 'lucide-react';
 
 interface DerendingerArticle {
   id: string;
@@ -30,6 +30,9 @@ interface ProductPickerProps {
   serviceType: string;
   onProductsSelected: (products: SelectedProduct[]) => void;
   selectedProducts: SelectedProduct[];
+  vehicleId?: string;
+  showOrderButton?: boolean;
+  onOrderComplete?: (orderId: string) => void;
 }
 
 // Service types that have parts
@@ -39,7 +42,10 @@ export default function DerendingerProductPicker({
   vin, 
   serviceType, 
   onProductsSelected,
-  selectedProducts 
+  selectedProducts,
+  vehicleId,
+  showOrderButton = false,
+  onOrderComplete,
 }: ProductPickerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [articles, setArticles] = useState<DerendingerArticle[]>([]);
@@ -48,6 +54,9 @@ export default function DerendingerProductPicker({
   const [manualCategories, setManualCategories] = useState<Set<string>>(new Set());
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [isAllManual, setIsAllManual] = useState(false);
+  const [isOrdering, setIsOrdering] = useState(false);
+  const [orderSuccess, setOrderSuccess] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
 
   // Group articles by category
   const groupedArticles = useMemo(() => {
@@ -58,6 +67,87 @@ export default function DerendingerProductPicker({
       return acc;
     }, {} as Record<string, DerendingerArticle[]>);
   }, [articles]);
+
+  // Listen for postMessage from Derendinger popup
+  const handleOrderMessage = useCallback((event: MessageEvent) => {
+    if (event.data?.type === 'DERENDINGER_ORDER_COMPLETE') {
+      const { orderId, success, error } = event.data;
+      console.log('Order message received:', event.data);
+      
+      if (success) {
+        setOrderSuccess(true);
+        setIsOrdering(false);
+        if (onOrderComplete && orderId) {
+          onOrderComplete(orderId);
+        }
+      } else {
+        console.error('Order failed:', error);
+        setIsOrdering(false);
+      }
+      setPendingOrderId(null);
+    }
+  }, [onOrderComplete]);
+
+  // Set up message listener for popup
+  useEffect(() => {
+    window.addEventListener('message', handleOrderMessage);
+    return () => window.removeEventListener('message', handleOrderMessage);
+  }, [handleOrderMessage]);
+
+  // Open Derendinger popup for ordering
+  const openDerendingerOrder = async () => {
+    if (selectedProducts.length === 0) return;
+    
+    setIsOrdering(true);
+    setOrderSuccess(false);
+    
+    try {
+      // Request session URL from backend
+      const response = await api.post('/derendinger/order/create-session', {
+        vehicleId: vehicleId || vin,
+        articles: selectedProducts.map(p => ({
+          id: p.id,
+          quantity: p.quantity,
+          name: `${p.supplier} ${p.articleNumber}`,
+        })),
+        reference: vehicleId || vin,
+        usePreprod: true, // Use preprod for now
+      });
+
+      if (response.data.success && response.data.sessionUrl) {
+        setPendingOrderId(response.data.orderId);
+        
+        // Open popup
+        const popup = window.open(
+          response.data.sessionUrl,
+          'DerendingerOrder',
+          'width=1200,height=800,scrollbars=yes,resizable=yes'
+        );
+
+        // Check if popup was blocked
+        if (!popup) {
+          alert('Popup wurde blockiert. Bitte erlauben Sie Popups für diese Seite.');
+          setIsOrdering(false);
+          return;
+        }
+
+        // Poll to check if popup was closed manually
+        const pollTimer = setInterval(() => {
+          if (popup.closed) {
+            clearInterval(pollTimer);
+            setIsOrdering(false);
+            setPendingOrderId(null);
+          }
+        }, 1000);
+      } else {
+        throw new Error(response.data.error || 'Failed to create session');
+      }
+    } catch (err: any) {
+      console.error('Error creating order session:', err);
+      alert('Fehler beim Erstellen der Bestellung: ' + (err.response?.data?.error || err.message));
+      setIsOrdering(false);
+    }
+  };
 
   // Get best article for a category (first one in stock, preferring immediate delivery)
   const getBestArticle = (categoryArticles: DerendingerArticle[]): DerendingerArticle | null => {
@@ -512,23 +602,61 @@ export default function DerendingerProductPicker({
 
           {/* Selected products summary */}
           {selectedProducts.length > 0 && (
-            <div className="mt-6 p-4 bg-primary-50 border border-primary-200 rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <ShoppingCart className="w-5 h-5 text-primary-600" />
-                <span className="font-medium text-primary-900">
-                  {selectedProducts.length} Artikel für Bestellung
-                </span>
-              </div>
-              <ul className="text-sm text-primary-800 space-y-1">
-                {selectedProducts.map((p) => (
-                  <li key={p.id} className="flex items-center gap-2">
-                    <span>• {p.quantity}x {p.supplier} {p.articleNumber}</span>
-                    {p.isAutoSelected && (
-                      <span className="text-xs text-purple-600">(Auto)</span>
+            <div className={`mt-6 p-4 border rounded-lg ${orderSuccess ? 'bg-emerald-50 border-emerald-200' : 'bg-primary-50 border-primary-200'}`}>
+              {orderSuccess ? (
+                <div className="flex items-center gap-3 text-emerald-800">
+                  <CheckCircle className="w-6 h-6 text-emerald-600" />
+                  <div>
+                    <p className="font-medium">Bestellung erfolgreich übermittelt!</p>
+                    <p className="text-sm text-emerald-600">Die Teile wurden bei Derendinger bestellt.</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <ShoppingCart className="w-5 h-5 text-primary-600" />
+                      <span className="font-medium text-primary-900">
+                        {selectedProducts.length} Artikel für Bestellung
+                      </span>
+                    </div>
+                    
+                    {showOrderButton && (
+                      <button
+                        onClick={openDerendingerOrder}
+                        disabled={isOrdering}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-all ${
+                          isOrdering 
+                            ? 'bg-gray-400 cursor-not-allowed' 
+                            : 'bg-orange-500 hover:bg-orange-600'
+                        }`}
+                      >
+                        {isOrdering ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Bestellen...
+                          </>
+                        ) : (
+                          <>
+                            <ExternalLink className="w-4 h-4" />
+                            Bei Derendinger bestellen
+                          </>
+                        )}
+                      </button>
                     )}
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                  <ul className="text-sm text-primary-800 space-y-1">
+                    {selectedProducts.map((p) => (
+                      <li key={p.id} className="flex items-center gap-2">
+                        <span>• {p.quantity}x {p.supplier} {p.articleNumber}</span>
+                        {p.isAutoSelected && (
+                          <span className="text-xs text-purple-600">(Auto)</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
             </div>
           )}
         </>

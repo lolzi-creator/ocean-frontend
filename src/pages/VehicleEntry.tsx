@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Pause, Play } from 'lucide-react';
+import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Pause, Play, Wrench, Package } from 'lucide-react';
 import DerendingerProductPicker from '../components/DerendingerProductPicker';
 
 interface SelectedProduct {
@@ -13,9 +13,32 @@ interface SelectedProduct {
   supplier: string;
   brand: string;
   stock: number;
+  totalStock: number;
   price: number | null;
+  images: string[];
+  category: string;
   categoryName: string;
+  salesQuantity: number;
+  availabilityType?: string;
+  deliveryInfo?: string;
   quantity: number;
+  isAutoSelected?: boolean;
+}
+
+interface ServiceTemplatePart {
+  partCode: string;
+  name: string;
+  functionalGroup?: string;
+  quantity: number;
+}
+
+interface ServiceTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  estimatedHours: number;
+  parts: ServiceTemplatePart[];
+  isActive: boolean;
 }
 
 interface StepData {
@@ -60,6 +83,8 @@ export default function VehicleEntry() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState<ServiceTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [formData, setFormData] = useState<StepData>({
     vehiclePhoto: null,
     documentPhoto: null,
@@ -84,6 +109,19 @@ export default function VehicleEntry() {
     vehicle: null,
     document: null,
   });
+
+  // Fetch custom service templates
+  useEffect(() => {
+    const fetchTemplates = async () => {
+      try {
+        const response = await api.get('/service-templates');
+        setCustomTemplates(response.data.filter((t: ServiceTemplate) => t.isActive));
+      } catch (error) {
+        console.log('Could not load custom templates');
+      }
+    };
+    fetchTemplates();
+  }, []);
 
   // Calculate total steps based on status
   // If on_hold: skip product selection (step 5)
@@ -341,46 +379,48 @@ export default function VehicleEntry() {
   const stepLabels = getStepLabels();
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-neutral-50 p-4 pb-24">
+      <div className="max-w-3xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-6">
           <button
             onClick={() => navigate('/vehicles')}
-            className="mb-4 flex items-center gap-2 text-gray-600 hover:text-gray-900"
+            className="mb-3 flex items-center gap-1.5 text-sm text-neutral-500 hover:text-neutral-700"
           >
-            <ArrowLeft className="w-5 h-5" />
-            Zurück
+            <ArrowLeft className="w-4 h-4" />
+            Abbrechen
           </button>
-          <h1 className="text-3xl font-bold text-gray-900">Neues Fahrzeug erfassen</h1>
-          <p className="text-gray-600 mt-2">Schritt-für-Schritt Anleitung</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Neues Fahrzeug</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">Schritt {currentStep} von {totalSteps}</p>
         </div>
 
         {/* Progress Steps */}
-        <div className="card mb-6">
-          <div className="flex items-center justify-between">
+        <div className="card p-4 mb-6">
+          <div className="flex items-center gap-2">
             {stepLabels.map((label, index) => {
               const step = index + 1;
               return (
                 <div key={step} className="flex items-center flex-1">
                   <div className="flex flex-col items-center flex-1">
                     <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center font-semibold text-sm transition-all ${
                         currentStep === step
                           ? 'bg-primary-600 text-white'
                           : currentStep > step
-                          ? 'bg-green-500 text-white'
-                          : 'bg-gray-200 text-gray-600'
+                          ? 'bg-success-500 text-white'
+                          : 'bg-neutral-100 text-neutral-400'
                       }`}
                     >
-                      {currentStep > step ? <CheckCircle className="w-5 h-5" /> : step}
+                      {currentStep > step ? <CheckCircle className="w-4 h-4" /> : step}
                     </div>
-                    <p className="text-xs mt-2 text-center text-gray-600">{label}</p>
+                    <p className={`text-[10px] mt-1.5 text-center ${
+                      currentStep >= step ? 'text-neutral-700' : 'text-neutral-400'
+                    }`}>{label}</p>
                   </div>
                   {step < totalSteps && (
                     <div
-                      className={`flex-1 h-1 mx-2 ${
-                        currentStep > step ? 'bg-green-500' : 'bg-gray-200'
+                      className={`flex-1 h-0.5 mx-1 rounded ${
+                        currentStep > step ? 'bg-success-500' : 'bg-neutral-200'
                       }`}
                     />
                   )}
@@ -396,8 +436,8 @@ export default function VehicleEntry() {
           {currentStep === 1 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Schritt 1: Fotos aufnehmen</h2>
-                <p className="text-gray-600">Machen Sie Fotos vom Fahrzeug und Fahrzeugausweis</p>
+                <h2 className="text-lg font-semibold text-neutral-900 mb-1">Fotos aufnehmen</h2>
+                <p className="text-sm text-neutral-500">Fahrzeug und Fahrzeugausweis fotografieren</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -702,25 +742,81 @@ export default function VehicleEntry() {
                 <label className="block text-sm font-medium text-gray-700 mb-3">
                   Service-Typ *
                 </label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {SERVICE_TYPES.map((service) => (
-                    <button
-                      key={service.value}
-                      type="button"
-                      onClick={() =>
-                        setFormData((prev) => ({ ...prev, serviceType: service.value }))
-                      }
-                      className={`p-4 rounded-lg border-2 text-left transition-all ${
-                        formData.serviceType === service.value
-                          ? 'border-primary-500 bg-primary-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="font-medium text-gray-900">{service.label}</div>
-                      <div className="text-sm text-gray-600 mt-1">{service.description}</div>
-                    </button>
-                  ))}
+                
+                {/* Predefined Service Types */}
+                <div className="mb-4">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2 font-semibold">
+                    Standard Services
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {SERVICE_TYPES.map((service) => (
+                      <button
+                        key={service.value}
+                        type="button"
+                        onClick={() => {
+                          setFormData((prev) => ({ ...prev, serviceType: service.value }));
+                          setSelectedTemplateId(null);
+                        }}
+                        className={`p-4 rounded-lg border-2 text-left transition-all ${
+                          formData.serviceType === service.value && !selectedTemplateId
+                            ? 'border-primary-500 bg-primary-50'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <div className="font-medium text-gray-900">{service.label}</div>
+                        <div className="text-sm text-gray-600 mt-1">{service.description}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                {/* Custom Service Templates */}
+                {customTemplates.length > 0 && (
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-2 font-semibold flex items-center gap-2">
+                      <Wrench className="w-3 h-3" />
+                      Eigene Vorlagen
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {customTemplates.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData((prev) => ({ ...prev, serviceType: `custom:${template.id}` }));
+                            setSelectedTemplateId(template.id);
+                          }}
+                          className={`p-4 rounded-lg border-2 text-left transition-all ${
+                            selectedTemplateId === template.id
+                              ? 'border-purple-500 bg-purple-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                              selectedTemplateId === template.id ? 'bg-purple-500' : 'bg-gray-200'
+                            }`}>
+                              <Wrench className={`w-3 h-3 ${
+                                selectedTemplateId === template.id ? 'text-white' : 'text-gray-500'
+                              }`} />
+                            </div>
+                            <div className="font-medium text-gray-900">{template.name}</div>
+                          </div>
+                          {template.description && (
+                            <div className="text-sm text-gray-600 mt-1">{template.description}</div>
+                          )}
+                          <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                            <span className="flex items-center gap-1">
+                              <Package className="w-3 h-3" />
+                              {template.parts?.length || 0} Teile
+                            </span>
+                            <span>~{template.estimatedHours}h</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -748,9 +844,46 @@ export default function VehicleEntry() {
                 <p className="text-gray-600">Passende Teile für Ihr Fahrzeug von Derendinger</p>
               </div>
 
+              {/* Custom template parts info */}
+              {selectedTemplateId && (() => {
+                const template = customTemplates.find(t => t.id === selectedTemplateId);
+                if (template && template.parts && template.parts.length > 0) {
+                  return (
+                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-8 h-8 bg-purple-500 rounded-lg flex items-center justify-center">
+                          <Wrench className="w-4 h-4 text-white" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-purple-900">Vorlage: {template.name}</p>
+                          <p className="text-xs text-purple-700">Diese Vorlage enthält vordefinierte Teile</p>
+                        </div>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 border border-purple-100">
+                        <p className="text-xs font-medium text-gray-500 mb-2">Vordefinierte Teile:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {template.parts.map((part, i) => (
+                            <span 
+                              key={i}
+                              className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-sm"
+                            >
+                              {part.quantity}x {part.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-xs text-purple-700 mt-3">
+                        Die passenden Artikel werden basierend auf Ihrem Fahrzeug von Derendinger geladen.
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               <DerendingerProductPicker
                 vin={formData.vin}
-                serviceType={formData.serviceType}
+                serviceType={selectedTemplateId ? 'big_service' : formData.serviceType}
                 selectedProducts={formData.selectedProducts}
                 onProductsSelected={(products) => 
                   setFormData((prev) => ({ ...prev, selectedProducts: products }))

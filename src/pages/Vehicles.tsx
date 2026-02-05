@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Plus, Search, Car, Edit, Trash2, X, Check, ChevronDown, ChevronUp, FileText, Send, Mail, Download } from 'lucide-react';
+import { Plus, Search, Car, Edit, Trash2, X, Check, ChevronDown, ChevronUp, FileText, Send, Mail, Download, Play, Pause, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import jsPDF from 'jspdf';
+import DerendingerProductPicker from '../components/DerendingerProductPicker';
 
 interface Vehicle {
   id: string;
@@ -28,8 +29,29 @@ interface Vehicle {
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string;
+  status?: string; // on_hold, active, completed
   isActive: boolean;
   createdAt: string;
+}
+
+interface SelectedProduct {
+  id: string;
+  articleNumber: string;
+  name: string;
+  description: string;
+  supplier: string;
+  brand: string;
+  stock: number;
+  totalStock: number;
+  price: number | null;
+  images: string[];
+  category: string;
+  categoryName: string;
+  salesQuantity: number;
+  availabilityType?: string;
+  deliveryInfo?: string;
+  quantity: number;
+  isAutoSelected?: boolean;
 }
 
 export default function Vehicles() {
@@ -59,6 +81,13 @@ export default function Vehicles() {
   const [createdInvoice, setCreatedInvoice] = useState<any>(null);
   const [pdfBlob, setPdfBlob] = useState<string | null>(null); // PDF data URL for preview
   const [isCreating, setIsCreating] = useState(false);
+  
+  // Activation modal state
+  const [showActivationModal, setShowActivationModal] = useState(false);
+  const [activatingVehicle, setActivatingVehicle] = useState<Vehicle | null>(null);
+  const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
+  const [isActivating, setIsActivating] = useState(false);
+  
   const [formData, setFormData] = useState({
     vin: '',
     brand: '',
@@ -810,248 +839,188 @@ export default function Vehicles() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header with Stats */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-2">
-            Fahrzeuge
-          </h1>
-          <p className="text-gray-600 font-medium">Verwalten Sie Ihre Garage-Fahrzeuge</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Fahrzeuge</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">
+            {totalVehicles} Fahrzeuge • {activeVehicles} aktiv
+          </p>
         </div>
-        <Link
-          to="/vehicles/new"
-          className="btn btn-primary flex items-center gap-2 self-start lg:self-auto shadow-lg hover:shadow-xl"
-        >
-          <Plus className="w-5 h-5" />
-          <span>Fahrzeug hinzufügen</span>
+        <Link to="/vehicles/new" className="btn btn-primary">
+          <Plus className="w-4 h-4" />
+          Neues Fahrzeug
         </Link>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="stat-card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Gesamt Fahrzeuge</p>
-              <p className="text-3xl font-bold text-gray-900">{totalVehicles}</p>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+              <Car className="w-5 h-5 text-primary-600" />
             </div>
-            <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Car className="w-6 h-6 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">{totalVehicles}</p>
+              <p className="text-xs text-neutral-500">Gesamt</p>
             </div>
           </div>
         </div>
-        <div className="stat-card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Aktive Fahrzeuge</p>
-              <p className="text-3xl font-bold text-green-600">{activeVehicles}</p>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
+              <Check className="w-5 h-5 text-success-600" />
             </div>
-            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Check className="w-6 h-6 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">{activeVehicles}</p>
+              <p className="text-xs text-neutral-500">Aktiv</p>
             </div>
           </div>
         </div>
-        <div className="stat-card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Inaktive Fahrzeuge</p>
-              <p className="text-3xl font-bold text-gray-600">{totalVehicles - activeVehicles}</p>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
+              <Pause className="w-5 h-5 text-neutral-500" />
             </div>
-            <div className="w-12 h-12 bg-gradient-to-br from-gray-400 to-gray-500 rounded-xl flex items-center justify-center shadow-lg">
-              <X className="w-6 h-6 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">{totalVehicles - activeVehicles}</p>
+              <p className="text-xs text-neutral-500">Wartend</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Search */}
-      <div className="card-elevated">
-        <div className="relative">
-          <div className="absolute left-4 top-1/2 transform -translate-y-1/2">
-            <Search className="w-5 h-5 text-gray-400" />
-          </div>
-          <input
-            type="text"
-            placeholder="Suche nach VIN, Marke, Modell oder Kennzeichen..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="input pl-12 text-base"
-          />
-        </div>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+        <input
+          type="text"
+          placeholder="Suche nach VIN, Marke, Modell..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="input pl-10"
+        />
       </div>
 
       {/* Vehicles List */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Car className="w-6 h-6 text-primary-600 animate-pulse" />
-            </div>
-          </div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 text-primary-600 animate-spin" />
         </div>
       ) : filteredVehicles.length === 0 ? (
-        <div className="card-elevated text-center py-16">
-          <div className="w-20 h-20 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Car className="w-10 h-10 text-gray-400" />
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Keine Fahrzeuge gefunden</h3>
-          <p className="text-gray-600 mb-6 max-w-md mx-auto">
-            {searchTerm ? 'Versuchen Sie einen anderen Suchbegriff' : 'Beginnen Sie mit dem Hinzufügen Ihres ersten Fahrzeugs'}
+        <div className="card text-center py-12">
+          <Car className="w-12 h-12 text-neutral-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-neutral-900 mb-1">Keine Fahrzeuge</h3>
+          <p className="text-sm text-neutral-500 mb-4">
+            {searchTerm ? 'Keine Ergebnisse für Ihre Suche' : 'Fügen Sie Ihr erstes Fahrzeug hinzu'}
           </p>
           {!searchTerm && (
-            <Link to="/vehicles/new" className="btn btn-primary inline-flex items-center gap-2">
-              <Plus className="w-5 h-5" />
-              Erstes Fahrzeug hinzufügen
+            <Link to="/vehicles/new" className="btn btn-primary">
+              <Plus className="w-4 h-4" />
+              Fahrzeug hinzufügen
             </Link>
           )}
         </div>
       ) : (
-        <div className="card-elevated">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Fahrzeug
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    VIN
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Jahr
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Kennzeichen
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Erstellt
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Aktionen
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredVehicles.map((vehicle, index) => (
-                  <tr
-                    key={vehicle.id}
-                    onClick={() => navigate(`/vehicles/${vehicle.id}`)}
-                    className={`hover:bg-gray-50 cursor-pointer transition-colors animate-slide-up ${
-                      !vehicle.isActive ? 'opacity-75' : ''
-                    }`}
-                    style={{ animationDelay: `${index * 30}ms` }}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 bg-gradient-to-br ${
-                          vehicle.isActive 
-                            ? 'from-primary-500 to-primary-600' 
-                            : 'from-gray-400 to-gray-500'
-                        } rounded-lg flex items-center justify-center shadow-md flex-shrink-0`}>
-                          <Car className="w-5 h-5 text-white" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-gray-900">
-                            {vehicle.brand && vehicle.model
-                              ? `${vehicle.brand} ${vehicle.model}`
-                              : 'Unbekanntes Fahrzeug'}
-                          </div>
-                          {vehicle.color && (
-                            <div className="text-xs text-gray-500">{vehicle.color}</div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-mono text-gray-900">{vehicle.vin}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{vehicle.year || '-'}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{vehicle.licensePlate || '-'}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        vehicle.isActive 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-gray-100 text-gray-800'
+        <div className="card p-0 overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-neutral-200 bg-neutral-50">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wide">Fahrzeug</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wide hidden md:table-cell">VIN</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wide hidden lg:table-cell">Kennzeichen</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wide">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 uppercase tracking-wide">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {filteredVehicles.map((vehicle) => (
+                <tr
+                  key={vehicle.id}
+                  onClick={() => navigate(`/vehicles/${vehicle.id}`)}
+                  className="hover:bg-neutral-50 cursor-pointer transition-colors"
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+                        vehicle.isActive ? 'bg-primary-100' : 'bg-neutral-100'
                       }`}>
-                        {vehicle.isActive ? 'Aktiv' : 'In Arbeit'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {format(new Date(vehicle.createdAt), 'dd.MM.yyyy')}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        {!vehicle.isActive && (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                await api.patch(`/vehicles/${vehicle.id}`, { isActive: true });
-                                toast.success('Fahrzeug auf Aktiv gesetzt');
-                                fetchVehicles();
-                              } catch (error) {
-                                toast.error('Fehler beim Aktivieren');
-                              }
-                            }}
-                            className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg transition-all duration-200 hover:scale-105 text-xs font-medium flex items-center gap-1"
-                            title="Auf Aktiv setzen"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            Aktiv
-                          </button>
-                        )}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickInvoice(vehicle, 'estimate');
-                          }}
-                          className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-all duration-200 hover:scale-105 text-xs font-medium flex items-center gap-1"
-                          title="Angebot erstellen"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          Angebot
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickInvoice(vehicle, 'invoice');
-                          }}
-                          className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg transition-all duration-200 hover:scale-105 text-xs font-medium flex items-center gap-1"
-                          title="Rechnung erstellen"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          Rechnung
-                        </button>
-                        <button
-                          onClick={() => handleEdit(vehicle)}
-                          className="p-2 hover:bg-primary-50 rounded-lg transition-all duration-200 hover:scale-110"
-                          title="Bearbeiten"
-                        >
-                          <Edit className="w-4 h-4 text-primary-600" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(vehicle.id)}
-                          className="p-2 hover:bg-red-50 rounded-lg transition-all duration-200 hover:scale-110"
-                          title="Löschen"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
+                        <Car className={`w-4 h-4 ${vehicle.isActive ? 'text-primary-600' : 'text-neutral-400'}`} />
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      <div>
+                        <p className="font-semibold text-neutral-900 text-sm">
+                          {vehicle.brand && vehicle.model ? `${vehicle.brand} ${vehicle.model}` : 'Unbekannt'}
+                        </p>
+                        <p className="text-xs text-neutral-500">{vehicle.year || ''}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    <code className="text-xs text-neutral-600 bg-neutral-100 px-2 py-1 rounded">{vehicle.vin}</code>
+                  </td>
+                  <td className="px-4 py-3 hidden lg:table-cell">
+                    <span className="text-sm text-neutral-700">{vehicle.licensePlate || '-'}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`badge ${
+                      vehicle.status === 'active' || (vehicle.isActive && vehicle.status !== 'on_hold')
+                        ? 'badge-success' 
+                        : vehicle.status === 'on_hold'
+                        ? 'badge-warning'
+                        : vehicle.status === 'completed'
+                        ? 'badge-info'
+                        : 'badge-gray'
+                    }`}>
+                      {vehicle.status === 'active' ? 'Aktiv' : 
+                       vehicle.status === 'on_hold' ? 'Wartend' :
+                       vehicle.status === 'completed' ? 'Fertig' :
+                       vehicle.isActive ? 'Aktiv' : 'Neu'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                      {(vehicle.status === 'on_hold' || (!vehicle.status && !vehicle.isActive)) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActivatingVehicle(vehicle);
+                            setSelectedProducts([]);
+                            setShowActivationModal(true);
+                          }}
+                          className="btn btn-sm bg-success-50 text-success-700 hover:bg-success-100"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span className="hidden sm:inline">Start</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleQuickInvoice(vehicle, 'estimate'); }}
+                        className="p-1.5 hover:bg-neutral-100 rounded-lg transition-colors"
+                        title="Angebot"
+                      >
+                        <FileText className="w-4 h-4 text-neutral-500" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleEdit(vehicle); }}
+                        className="p-1.5 hover:bg-neutral-100 rounded-lg transition-colors"
+                        title="Bearbeiten"
+                      >
+                        <Edit className="w-4 h-4 text-neutral-500" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDelete(vehicle.id); }}
+                        className="p-1.5 hover:bg-danger-50 rounded-lg transition-colors"
+                        title="Löschen"
+                      >
+                        <Trash2 className="w-4 h-4 text-danger-500" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -1718,6 +1687,147 @@ export default function Vehicles() {
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle Activation Modal - For activating on_hold vehicles */}
+      {showActivationModal && activatingVehicle && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl animate-slide-up">
+            <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex items-center justify-between rounded-t-3xl z-10">
+              <div>
+                <h2 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                  Fahrzeug aktivieren
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {activatingVehicle.brand} {activatingVehicle.model} • {activatingVehicle.vin}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowActivationModal(false);
+                  setActivatingVehicle(null);
+                  setSelectedProducts([]);
+                }}
+                className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 hover:scale-110"
+              >
+                <X className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* Info about activation */}
+              <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <Play className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-green-900">Fahrzeug aktivieren</p>
+                    <p className="text-sm text-green-700 mt-1">
+                      Wählen Sie die Ersatzteile aus, die für diesen Auftrag benötigt werden. 
+                      Nach der Aktivierung können die Arbeiten beginnen.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Service type info */}
+              {activatingVehicle.serviceType && (
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
+                  <span className="font-medium">Service:</span>{' '}
+                  {activatingVehicle.serviceType === 'small_service' ? 'Kleine Wartung' :
+                   activatingVehicle.serviceType === 'big_service' ? 'Grosse Wartung' :
+                   activatingVehicle.serviceType === 'brake_service' ? 'Bremsenservice' :
+                   activatingVehicle.serviceType === 'inspection' ? 'Inspektion' :
+                   activatingVehicle.serviceType === 'tire_change' ? 'Reifenwechsel' :
+                   activatingVehicle.serviceType}
+                </div>
+              )}
+
+              {/* Derendinger Product Picker */}
+              <DerendingerProductPicker
+                vin={activatingVehicle.vin}
+                serviceType={activatingVehicle.serviceType || ''}
+                selectedProducts={selectedProducts}
+                onProductsSelected={setSelectedProducts}
+                vehicleId={activatingVehicle.id}
+                showOrderButton={true}
+                onOrderComplete={(orderId) => {
+                  toast.success('Bestellung bei Derendinger übermittelt!');
+                  console.log('Order completed:', orderId);
+                }}
+              />
+            </div>
+
+            {/* Footer with action buttons */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-b-3xl">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowActivationModal(false);
+                    setActivatingVehicle(null);
+                    setSelectedProducts([]);
+                  }}
+                  className="btn btn-secondary"
+                  disabled={isActivating}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={async () => {
+                    setIsActivating(true);
+                    try {
+                      // Create expenses for selected products
+                      if (selectedProducts.length > 0) {
+                        for (const product of selectedProducts) {
+                          await api.post('/expenses', {
+                            vehicleId: activatingVehicle.id,
+                            description: `${product.quantity}x ${product.supplier} ${product.articleNumber} - ${product.categoryName}`,
+                            category: 'parts',
+                            amount: (product.price || 25) * product.quantity,
+                            date: new Date().toISOString(),
+                            notes: `Derendinger Artikel-ID: ${product.id}`,
+                          });
+                        }
+                        toast.success(`${selectedProducts.length} Ersatzteile bestellt!`);
+                      }
+
+                      // Update vehicle status to active
+                      await api.patch(`/vehicles/${activatingVehicle.id}`, { 
+                        status: 'active',
+                        isActive: true 
+                      });
+                      
+                      toast.success('Fahrzeug aktiviert - Arbeiten können beginnen!');
+                      setShowActivationModal(false);
+                      setActivatingVehicle(null);
+                      setSelectedProducts([]);
+                      fetchVehicles();
+                    } catch (error: any) {
+                      toast.error(error.response?.data?.message || 'Fehler beim Aktivieren');
+                    } finally {
+                      setIsActivating(false);
+                    }
+                  }}
+                  disabled={isActivating}
+                  className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+                >
+                  {isActivating ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Aktiviere...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5" />
+                      {selectedProducts.length > 0 
+                        ? `Aktivieren & ${selectedProducts.length} Teile bestellen`
+                        : 'Ohne Teile aktivieren'}
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>

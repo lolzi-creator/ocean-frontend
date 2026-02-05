@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Plus, FileText, Edit, Trash2, X, Download, Send, Clock, Check, FileDown, Car, ChevronDown, ChevronUp } from 'lucide-react';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
+import { FileText, Edit, Trash2, X, Send, Clock, Check, FileDown, Car, ChevronDown, ChevronUp } from 'lucide-react';
+import { format } from 'date-fns';
+import { useDateFilter, useVehicles } from '../hooks';
 
 interface Invoice {
   id: string;
@@ -33,21 +34,14 @@ interface Invoice {
   };
 }
 
-interface Vehicle {
-  id: string;
-  vin: string;
-  brand?: string;
-  model?: string;
-}
+// Vehicle interface imported from hooks
 
 export default function Invoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterPeriod, setFilterPeriod] = useState<string>('all');
   const [filterVehicle, setFilterVehicle] = useState<string>('all');
   const [groupByVehicle, setGroupByVehicle] = useState<boolean>(true);
   const [expandedVehicles, setExpandedVehicles] = useState<Set<string>>(new Set());
@@ -62,10 +56,9 @@ export default function Invoices() {
     items: [{ description: '', quantity: '1', unitPrice: '0', total: '0' }],
   });
 
-  useEffect(() => {
-    fetchInvoices();
-    fetchVehicles();
-  }, []);
+  // Use shared hooks
+  const { filterPeriod, setFilterPeriod, filterByDate } = useDateFilter('all');
+  const { activeVehicles: vehicles } = useVehicles();
 
   useEffect(() => {
     fetchInvoices();
@@ -73,56 +66,19 @@ export default function Invoices() {
 
   const fetchInvoices = async () => {
     try {
-      const params: any = {};
+      const params: Record<string, string> = {};
       if (filterVehicle !== 'all') params.vehicleId = filterVehicle;
-      
-      // Add date filters based on period
-      if (filterPeriod !== 'all') {
-        const now = new Date();
-        let startDate: Date;
-        let endDate: Date;
-        
-        if (filterPeriod === 'week') {
-          startDate = startOfWeek(now, { weekStartsOn: 1 }); // Monday
-          endDate = endOfWeek(now, { weekStartsOn: 1 });
-        } else if (filterPeriod === 'month') {
-          startDate = startOfMonth(now);
-          endDate = endOfMonth(now);
-        } else if (filterPeriod === 'year') {
-          startDate = startOfYear(now);
-          endDate = endOfYear(now);
-        } else {
-          startDate = startOfWeek(now, { weekStartsOn: 1 });
-          endDate = endOfWeek(now, { weekStartsOn: 1 });
-        }
-        
-        // Filter invoices by date on client side since backend might not support date filtering
-        const response = await api.get('/invoices', { params });
-        const allInvoices = response.data;
-        
-        const filtered = allInvoices.filter((inv: Invoice) => {
-          const invDate = new Date(inv.createdAt);
-          return invDate >= startDate && invDate <= endDate;
-        });
-        
-        setInvoices(filtered);
-      } else {
-        const response = await api.get('/invoices', { params });
-        setInvoices(response.data);
-      }
+
+      const response = await api.get('/invoices', { params });
+      const allInvoices: Invoice[] = response.data;
+
+      // Use the shared date filter
+      const filtered = filterByDate(allInvoices, (inv) => new Date(inv.createdAt));
+      setInvoices(filtered);
     } catch (error) {
       toast.error('Rechnungen konnten nicht geladen werden');
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const fetchVehicles = async () => {
-    try {
-      const response = await api.get('/vehicles');
-      setVehicles(response.data.filter((v: any) => v.isActive !== false));
-    } catch (error) {
-      toast.error('Fahrzeuge konnten nicht geladen werden');
     }
   };
 
@@ -342,15 +298,15 @@ export default function Invoices() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'draft':
-        return 'bg-gray-100 text-gray-700';
+        return 'badge-gray';
       case 'sent':
-        return 'bg-blue-100 text-blue-700';
+        return 'badge-info';
       case 'paid':
-        return 'bg-green-100 text-green-700';
+        return 'badge-success';
       case 'cancelled':
-        return 'bg-red-100 text-red-700';
+        return 'badge-danger';
       default:
-        return 'bg-gray-100 text-gray-700';
+        return 'badge-gray';
     }
   };
 
@@ -363,99 +319,86 @@ export default function Invoices() {
   const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.total, 0);
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-2">
-            Rechnungen & Angebote
-          </h1>
-          <p className="text-gray-600 font-medium">Rechnungen und Angebote verwalten</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Rechnungen</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">{invoices.length} Dokumente</p>
         </div>
-        <div className="flex items-center gap-3 self-start lg:self-auto">
-          <button
-            onClick={handleExportCSV}
-            className="btn btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl"
-          >
-            <FileDown className="w-5 h-5" />
-            <span>Export CSV</span>
-          </button>
-        </div>
+        <button onClick={handleExportCSV} className="btn btn-secondary">
+          <FileDown className="w-4 h-4" />
+          Export
+        </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="stat-card border-l-4 border-primary-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Gesamt Rechnungen</p>
-              <p className="text-3xl font-bold text-gray-900">{invoices.length}</p>
-              <p className="text-xs text-gray-500 mt-1">{filteredInvoices.length} gefiltert</p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+              <FileText className="w-5 h-5 text-primary-600" />
             </div>
-            <div className="w-14 h-14 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-lg">
-              <FileText className="w-7 h-7 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">{invoices.length}</p>
+              <p className="text-xs text-neutral-500">Gesamt</p>
             </div>
           </div>
         </div>
-        <div className="stat-card border-l-4 border-green-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Einnahmen</p>
-              <p className="text-3xl font-bold text-green-600">CHF {totalRevenue.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">Bezahlte Rechnungen</p>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
+              <Check className="w-5 h-5 text-success-600" />
             </div>
-            <div className="w-14 h-14 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Check className="w-7 h-7 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">CHF {totalRevenue.toFixed(0)}</p>
+              <p className="text-xs text-neutral-500">Bezahlt</p>
             </div>
           </div>
         </div>
-        <div className="stat-card border-l-4 border-amber-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Ausstehend</p>
-              <p className="text-3xl font-bold text-amber-600">CHF {pendingAmount.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">Offene Rechnungen</p>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-warning-100 rounded-lg flex items-center justify-center">
+              <Clock className="w-5 h-5 text-warning-600" />
             </div>
-            <div className="w-14 h-14 bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl flex items-center justify-center shadow-lg">
-              <Clock className="w-7 h-7 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">CHF {pendingAmount.toFixed(0)}</p>
+              <p className="text-xs text-neutral-500">Offen</p>
             </div>
           </div>
         </div>
-        <div className="stat-card border-l-4 border-blue-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Gesamt fakturiert</p>
-              <p className="text-3xl font-bold text-blue-600">CHF {totalInvoiced.toFixed(2)}</p>
-              <p className="text-xs text-gray-500 mt-1">Alle Rechnungen</p>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
+              <FileText className="w-5 h-5 text-neutral-600" />
             </div>
-            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-              <FileText className="w-7 h-7 text-white" />
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">CHF {totalInvoiced.toFixed(0)}</p>
+              <p className="text-xs text-neutral-500">Fakturiert</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="card-elevated">
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[150px]">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Typ</label>
+      <div className="card p-4">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="w-32">
             <select
               value={filterType}
               onChange={(e) => setFilterType(e.target.value)}
-              className="input"
+              className="input text-sm"
             >
               <option value="all">Alle Typen</option>
               <option value="invoice">Rechnungen</option>
               <option value="estimate">Angebote</option>
             </select>
           </div>
-          <div className="flex-1 min-w-[150px]">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+          <div className="w-32">
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="input"
+              className="input text-sm"
             >
               <option value="all">Alle Status</option>
               <option value="draft">Entwurf</option>
@@ -464,76 +407,44 @@ export default function Invoices() {
               <option value="cancelled">Storniert</option>
             </select>
           </div>
-          <div className="flex-1 min-w-[150px]">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">Fahrzeug</label>
+          <div className="w-40">
             <select
               value={filterVehicle}
               onChange={(e) => setFilterVehicle(e.target.value)}
-              className="input"
+              className="input text-sm"
             >
               <option value="all">Alle Fahrzeuge</option>
               {vehicles.map((vehicle) => (
                 <option key={vehicle.id} value={vehicle.id}>
-                  {vehicle.brand && vehicle.model
-                    ? `${vehicle.brand} ${vehicle.model}`
-                    : vehicle.vin}
+                  {vehicle.brand && vehicle.model ? `${vehicle.brand} ${vehicle.model}` : vehicle.vin}
                 </option>
               ))}
             </select>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setFilterPeriod('week')}
-              className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 ${
-                filterPeriod === 'week'
-                  ? 'bg-primary-600 text-white shadow-lg'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-              }`}
-            >
-              Woche
-            </button>
-            <button
-              onClick={() => setFilterPeriod('month')}
-              className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 ${
-                filterPeriod === 'month'
-                  ? 'bg-primary-600 text-white shadow-lg'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-              }`}
-            >
-              Monat
-            </button>
-            <button
-              onClick={() => setFilterPeriod('year')}
-              className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 ${
-                filterPeriod === 'year'
-                  ? 'bg-primary-600 text-white shadow-lg'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-              }`}
-            >
-              Jahr
-            </button>
-            <button
-              onClick={() => setFilterPeriod('all')}
-              className={`px-4 py-2 rounded-xl font-semibold transition-all duration-200 ${
-                filterPeriod === 'all'
-                  ? 'bg-primary-600 text-white shadow-lg'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-              }`}
-            >
-              Gesamt
-            </button>
+          <div className="flex gap-1 bg-neutral-100 p-1 rounded-lg">
+            {['week', 'month', 'year', 'all'].map((period) => (
+              <button
+                key={period}
+                onClick={() => setFilterPeriod(period as any)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  filterPeriod === period
+                    ? 'bg-white text-neutral-900 shadow-sm'
+                    : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                {period === 'week' ? 'Woche' : period === 'month' ? 'Monat' : period === 'year' ? 'Jahr' : 'Alle'}
+              </button>
+            ))}
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={groupByVehicle}
-                onChange={(e) => setGroupByVehicle(e.target.checked)}
-                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-              />
-              <span className="text-sm font-semibold text-gray-700">Nach Fahrzeug gruppieren</span>
-            </label>
-          </div>
+          <label className="flex items-center gap-2 cursor-pointer ml-auto">
+            <input
+              type="checkbox"
+              checked={groupByVehicle}
+              onChange={(e) => setGroupByVehicle(e.target.checked)}
+              className="w-4 h-4 text-primary-600 border-neutral-300 rounded"
+            />
+            <span className="text-sm text-neutral-600">Gruppieren</span>
+          </label>
         </div>
       </div>
 
