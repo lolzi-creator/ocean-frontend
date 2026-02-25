@@ -14,7 +14,7 @@ interface SelectedProduct {
   brand: string;
   stock: number;
   totalStock: number;
-  price: number | null;
+  price: any; // Object with net1Price, grossPrice, etc. from Derendinger ERP
   images: string[];
   category: string;
   categoryName: string;
@@ -23,6 +23,8 @@ interface SelectedProduct {
   deliveryInfo?: string;
   quantity: number;
   isAutoSelected?: boolean;
+  _rawArticle?: any;
+  _rawCategory?: any;
 }
 
 interface ServiceTemplatePart {
@@ -124,16 +126,9 @@ export default function VehicleEntry() {
   }, []);
 
   // Calculate total steps based on status
-  // If on_hold: skip product selection (step 5)
-  const totalSteps = formData.vehicleStatus === 'on_hold' ? 5 : 6;
-  
-  // Get actual step number for display
-  const getDisplayStep = (step: number) => {
-    if (formData.vehicleStatus === 'on_hold' && step >= 5) {
-      return step; // Step 5 becomes customer info
-    }
-    return step;
-  };
+  // Active: Fotos → VIN → Details → Service → Teile → Kunde → Übersicht (7)
+  // On_hold: Fotos → VIN → Details → Service → Kunde → Übersicht (6)
+  const totalSteps = formData.vehicleStatus === 'on_hold' ? 6 : 7;
 
   const handlePhotoUpload = (type: 'vehicle' | 'document', file: File | null) => {
     if (file) {
@@ -322,7 +317,7 @@ export default function VehicleEntry() {
             vehicleId: vehicleId,
             description: `${product.quantity}x ${product.supplier} ${product.articleNumber} - ${product.categoryName}`,
             category: 'parts',
-            amount: (product.price || 25) * product.quantity,
+            amount: (product.price?.net1Price || product.price?.grossPrice || 25) * product.quantity,
             date: new Date().toISOString(),
             notes: `Derendinger Artikel-ID: ${product.id}`,
           });
@@ -362,8 +357,15 @@ export default function VehicleEntry() {
         }
         return true;
       case 6:
-        // Only reached if active status
+        // If on_hold: this is summary step (always true)
+        // If active: this is customer step
+        if (formData.vehicleStatus === 'on_hold') {
+          return true;
+        }
         return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
+      case 7:
+        // Only reached if active: summary step (always true)
+        return true;
       default:
         return false;
     }
@@ -371,9 +373,9 @@ export default function VehicleEntry() {
 
   const getStepLabels = () => {
     if (formData.vehicleStatus === 'on_hold') {
-      return ['Fotos', 'VIN', 'Details', 'Service', 'Kunde'];
+      return ['Fotos', 'VIN', 'Details', 'Service', 'Kunde', 'Übersicht'];
     }
-    return ['Fotos', 'VIN', 'Details', 'Service', 'Teile', 'Kunde'];
+    return ['Fotos', 'VIN', 'Details', 'Service', 'Teile', 'Kunde', 'Übersicht'];
   };
 
   const stepLabels = getStepLabels();
@@ -893,7 +895,7 @@ export default function VehicleEntry() {
           )}
 
           {/* Customer Info - Step 5 for on_hold, Step 6 for active */}
-          {((currentStep === 5 && formData.vehicleStatus === 'on_hold') || 
+          {((currentStep === 5 && formData.vehicleStatus === 'on_hold') ||
             (currentStep === 6 && formData.vehicleStatus === 'active')) && (
             <div className="space-y-6">
               <div>
@@ -982,6 +984,134 @@ export default function VehicleEntry() {
               )}
             </div>
           )}
+
+          {/* Summary Step - Step 6 for on_hold, Step 7 for active */}
+          {((currentStep === 6 && formData.vehicleStatus === 'on_hold') ||
+            (currentStep === 7 && formData.vehicleStatus === 'active')) && (() => {
+            const serviceLabel = SERVICE_TYPES.find(s => s.value === formData.serviceType)?.label
+              || customTemplates.find(t => `custom:${t.id}` === formData.serviceType)?.name
+              || formData.serviceType;
+            const getPrice = (p: SelectedProduct) => p.price?.net1Price || p.price?.grossPrice || 0;
+            const getRetail = (p: SelectedProduct) => p.price?.grossPrice || p.price?.uvpePrice || 0;
+            const totalCost = formData.selectedProducts.reduce((sum, p) => sum + getPrice(p) * p.quantity, 0);
+            const totalRetail = formData.selectedProducts.reduce((sum, p) => sum + getRetail(p) * p.quantity, 0);
+
+            return (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-2xl font-bold mb-2">
+                    Schritt {formData.vehicleStatus === 'on_hold' ? 6 : 7}: Übersicht
+                  </h2>
+                  <p className="text-gray-600">Bitte prüfen Sie alle Angaben vor dem Erfassen</p>
+                </div>
+
+                {/* Vehicle */}
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <h3 className="font-semibold text-gray-900 mb-3">Fahrzeug</h3>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                    <div><span className="text-gray-500">Marke/Modell:</span> <span className="font-medium">{formData.brand} {formData.model}</span></div>
+                    <div><span className="text-gray-500">VIN:</span> <span className="font-mono text-xs">{formData.vin}</span></div>
+                    {formData.licensePlate && <div><span className="text-gray-500">Kennzeichen:</span> <span className="font-medium">{formData.licensePlate}</span></div>}
+                    {formData.year && <div><span className="text-gray-500">Jahr:</span> {formData.year}</div>}
+                    {formData.color && <div><span className="text-gray-500">Farbe:</span> {formData.color}</div>}
+                    {formData.mileage && <div><span className="text-gray-500">km-Stand:</span> {formData.mileage} km</div>}
+                  </div>
+                </div>
+
+                {/* Service */}
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <h3 className="font-semibold text-gray-900 mb-3">Service</h3>
+                  <div className="text-sm space-y-1">
+                    <div><span className="text-gray-500">Typ:</span> <span className="font-medium">{serviceLabel}</span></div>
+                    {formData.workDescription && (
+                      <div><span className="text-gray-500">Beschreibung:</span> {formData.workDescription}</div>
+                    )}
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        formData.vehicleStatus === 'active'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {formData.vehicleStatus === 'active' ? 'Aktiv' : 'Wartend'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Parts (only for active with selected products) */}
+                {formData.vehicleStatus === 'active' && formData.selectedProducts.length > 0 && (
+                  <div className="bg-gray-50 rounded-xl p-4">
+                    <h3 className="font-semibold text-gray-900 mb-3">Ersatzteile</h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-gray-500 border-b border-gray-200">
+                            <th className="pb-2 font-medium">Artikel</th>
+                            <th className="pb-2 font-medium text-center">Anz.</th>
+                            <th className="pb-2 font-medium text-right">Einkauf</th>
+                            <th className="pb-2 font-medium text-right">Listenpreis</th>
+                            <th className="pb-2 font-medium text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {formData.selectedProducts.map((p) => (
+                            <tr key={p.id}>
+                              <td className="py-2">
+                                <div className="font-medium text-gray-900">{p.brand} {p.articleNumber}</div>
+                                <div className="text-xs text-gray-500">{p.categoryName}</div>
+                              </td>
+                              <td className="py-2 text-center">{p.quantity}</td>
+                              <td className="py-2 text-right text-gray-700">
+                                {getPrice(p) > 0 ? `CHF ${getPrice(p).toFixed(2)}` : '-'}
+                              </td>
+                              <td className="py-2 text-right text-gray-400">
+                                {getRetail(p) > 0 ? `CHF ${getRetail(p).toFixed(2)}` : '-'}
+                              </td>
+                              <td className="py-2 text-right font-medium">
+                                {getPrice(p) > 0 ? `CHF ${(getPrice(p) * p.quantity).toFixed(2)}` : '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Totals */}
+                    <div className="mt-4 pt-3 border-t border-gray-200 space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Einkauf (unser Preis)</span>
+                        <span className="font-semibold text-gray-900">CHF {totalCost.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Listenpreis (UVP)</span>
+                        <span className="text-gray-500">CHF {totalRetail.toFixed(2)}</span>
+                      </div>
+                      {totalRetail > totalCost && totalCost > 0 && (
+                        <div className="flex justify-between text-sm pt-1">
+                          <span className="text-emerald-600 font-medium">Marge</span>
+                          <span className="text-emerald-600 font-semibold">
+                            CHF {(totalRetail - totalCost).toFixed(2)} ({Math.round((1 - totalCost / totalRetail) * 100)}%)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Customer */}
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <h3 className="font-semibold text-gray-900 mb-3">Kunde</h3>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                    <div><span className="text-gray-500">Name:</span> <span className="font-medium">{formData.customerName}</span></div>
+                    <div><span className="text-gray-500">E-Mail:</span> {formData.customerEmail}</div>
+                    {formData.customerPhone && (
+                      <div><span className="text-gray-500">Telefon:</span> {formData.customerPhone}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Navigation Buttons */}
           <div className="flex justify-between pt-6 mt-6 border-t">

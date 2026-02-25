@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../lib/api';
-import { Package, Check, Loader2, ShoppingCart, AlertCircle, Sparkles, Hand, ChevronDown, ChevronUp, ExternalLink, CheckCircle } from 'lucide-react';
+import { Package, Check, Loader2, ShoppingCart, AlertCircle, Sparkles, Hand, ChevronDown, ChevronUp, CheckCircle } from 'lucide-react';
 
 interface DerendingerArticle {
   id: string;
@@ -18,6 +18,9 @@ interface DerendingerArticle {
   salesQuantity: number;
   availabilityType?: string;
   deliveryInfo?: string;
+  // Raw data needed for cart/add (Derendinger requires the full object)
+  _rawArticle?: any;
+  _rawCategory?: any;
 }
 
 interface SelectedProduct extends DerendingerArticle {
@@ -51,12 +54,13 @@ export default function DerendingerProductPicker({
   const [articles, setArticles] = useState<DerendingerArticle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [vehicleInfo, setVehicleInfo] = useState<any>(null);
+  const [rawVehicle, setRawVehicle] = useState<any>(null);
   const [manualCategories, setManualCategories] = useState<Set<string>>(new Set());
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [isAllManual, setIsAllManual] = useState(false);
   const [isOrdering, setIsOrdering] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
-  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [orderNumber, setOrderNumber] = useState<string | null>(null);
 
   // Group articles by category
   const groupedArticles = useMemo(() => {
@@ -68,83 +72,43 @@ export default function DerendingerProductPicker({
     }, {} as Record<string, DerendingerArticle[]>);
   }, [articles]);
 
-  // Listen for postMessage from Derendinger popup
-  const handleOrderMessage = useCallback((event: MessageEvent) => {
-    if (event.data?.type === 'DERENDINGER_ORDER_COMPLETE') {
-      const { orderId, success, error } = event.data;
-      console.log('Order message received:', event.data);
-      
-      if (success) {
-        setOrderSuccess(true);
-        setIsOrdering(false);
-        if (onOrderComplete && orderId) {
-          onOrderComplete(orderId);
-        }
-      } else {
-        console.error('Order failed:', error);
-        setIsOrdering(false);
-      }
-      setPendingOrderId(null);
-    }
-  }, [onOrderComplete]);
-
-  // Set up message listener for popup
-  useEffect(() => {
-    window.addEventListener('message', handleOrderMessage);
-    return () => window.removeEventListener('message', handleOrderMessage);
-  }, [handleOrderMessage]);
-
-  // Open Derendinger popup for ordering
-  const openDerendingerOrder = async () => {
+  // Place order via direct API: cart/add each item → order/place
+  const placeOrder = async () => {
     if (selectedProducts.length === 0) return;
-    
+
     setIsOrdering(true);
     setOrderSuccess(false);
-    
+    setOrderNumber(null);
+
     try {
-      // Request session URL from backend
-      const response = await api.post('/derendinger/order/create-session', {
-        vehicleId: vehicleId || vin,
-        articles: selectedProducts.map(p => ({
-          id: p.id,
-          quantity: p.quantity,
-          name: `${p.supplier} ${p.articleNumber}`,
-        })),
+      // 1. Add each selected product to the Derendinger cart
+      for (const product of selectedProducts) {
+        await api.post('/derendinger/cart/add', {
+          rawArticle: product._rawArticle,
+          rawCategory: product._rawCategory,
+          rawVehicle: rawVehicle,
+          quantity: product.quantity,
+        });
+      }
+
+      // 2. Place the order
+      const orderRes = await api.post('/derendinger/order/place', {
         reference: vehicleId || vin,
-        usePreprod: true, // Use preprod for now
       });
 
-      if (response.data.success && response.data.sessionUrl) {
-        setPendingOrderId(response.data.orderId);
-        
-        // Open popup
-        const popup = window.open(
-          response.data.sessionUrl,
-          'DerendingerOrder',
-          'width=1200,height=800,scrollbars=yes,resizable=yes'
-        );
-
-        // Check if popup was blocked
-        if (!popup) {
-          alert('Popup wurde blockiert. Bitte erlauben Sie Popups für diese Seite.');
-          setIsOrdering(false);
-          return;
+      if (orderRes.data.success) {
+        setOrderSuccess(true);
+        setOrderNumber(orderRes.data.orderNumber || null);
+        if (onOrderComplete) {
+          onOrderComplete(orderRes.data.orderNumber || '');
         }
-
-        // Poll to check if popup was closed manually
-        const pollTimer = setInterval(() => {
-          if (popup.closed) {
-            clearInterval(pollTimer);
-            setIsOrdering(false);
-            setPendingOrderId(null);
-          }
-        }, 1000);
       } else {
-        throw new Error(response.data.error || 'Failed to create session');
+        throw new Error(orderRes.data.error || 'Bestellung fehlgeschlagen');
       }
     } catch (err: any) {
-      console.error('Error creating order session:', err);
-      alert('Fehler beim Erstellen der Bestellung: ' + (err.response?.data?.error || err.message));
+      console.error('Order error:', err);
+      alert('Fehler bei der Bestellung: ' + (err.response?.data?.message || err.message));
+    } finally {
       setIsOrdering(false);
     }
   };
@@ -229,9 +193,10 @@ export default function DerendingerProductPicker({
       if (response.data.success) {
         const articles = response.data.data.articles || [];
         const vehicle = response.data.data.vehicle;
-        
+
         setArticles(articles);
         setVehicleInfo(vehicle);
+        setRawVehicle(response.data.data._rawVehicle || null);
         
         if (articles.length === 0) {
           // Check if vehicle was not found at all
@@ -608,7 +573,10 @@ export default function DerendingerProductPicker({
                   <CheckCircle className="w-6 h-6 text-emerald-600" />
                   <div>
                     <p className="font-medium">Bestellung erfolgreich übermittelt!</p>
-                    <p className="text-sm text-emerald-600">Die Teile wurden bei Derendinger bestellt.</p>
+                    <p className="text-sm text-emerald-600">
+                      Die Teile wurden bei Derendinger bestellt.
+                      {orderNumber && <> Bestellnr: <strong>{orderNumber}</strong></>}
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -623,11 +591,11 @@ export default function DerendingerProductPicker({
                     
                     {showOrderButton && (
                       <button
-                        onClick={openDerendingerOrder}
+                        onClick={placeOrder}
                         disabled={isOrdering}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-white transition-all ${
-                          isOrdering 
-                            ? 'bg-gray-400 cursor-not-allowed' 
+                          isOrdering
+                            ? 'bg-gray-400 cursor-not-allowed'
                             : 'bg-orange-500 hover:bg-orange-600'
                         }`}
                       >
@@ -638,7 +606,7 @@ export default function DerendingerProductPicker({
                           </>
                         ) : (
                           <>
-                            <ExternalLink className="w-4 h-4" />
+                            <ShoppingCart className="w-4 h-4" />
                             Bei Derendinger bestellen
                           </>
                         )}
