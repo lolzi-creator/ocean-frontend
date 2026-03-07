@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Pause, Play, Wrench, Package } from 'lucide-react';
+import { Camera, FileText, CheckCircle, ArrowRight, ArrowLeft, X, Pause, Play, Wrench, Package, ShoppingBag } from 'lucide-react';
 import DerendingerProductPicker from '../components/DerendingerProductPicker';
+import type { ServiceTemplate } from '../types';
 
 interface SelectedProduct {
   id: string;
@@ -14,7 +15,7 @@ interface SelectedProduct {
   brand: string;
   stock: number;
   totalStock: number;
-  price: any; // Object with net1Price, grossPrice, etc. from Derendinger ERP
+  price: any;
   images: string[];
   category: string;
   categoryName: string;
@@ -25,33 +26,18 @@ interface SelectedProduct {
   isAutoSelected?: boolean;
   _rawArticle?: any;
   _rawCategory?: any;
-}
-
-interface ServiceTemplatePart {
-  partCode: string;
-  name: string;
-  functionalGroup?: string;
-  quantity: number;
-}
-
-interface ServiceTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  estimatedHours: number;
-  parts: ServiceTemplatePart[];
-  isActive: boolean;
+  _rawVehicle?: any;
 }
 
 interface StepData {
   // Step 1: Photos
   vehiclePhoto: File | null;
   documentPhoto: File | null;
-  
+
   // Step 2: VIN & Basic Info
   vin: string;
   vinFromOCR: string;
-  
+
   // Step 3: Vehicle Details
   brand: string;
   model: string;
@@ -59,34 +45,24 @@ interface StepData {
   color: string;
   licensePlate: string;
   mileage: string;
-  
+
   // Step 4: Service Selection + Status
-  serviceType: string;
+  serviceTemplateId: string;
   workDescription: string;
   vehicleStatus: 'active' | 'on_hold';
   selectedProducts: SelectedProduct[];
-  
+
   // Step 5: Customer Info
   customerName: string;
   customerEmail: string;
   customerPhone: string;
 }
 
-const SERVICE_TYPES = [
-  { value: 'small_service', label: 'Kleine Wartung', description: 'Ölwechsel, Filter, Inspektion' },
-  { value: 'big_service', label: 'Grosse Wartung', description: 'Vollständige Wartung mit allen Checks' },
-  { value: 'tire_change', label: 'Reifenwechsel', description: 'Reifen wechseln und auswuchten' },
-  { value: 'brake_service', label: 'Bremsenservice', description: 'Bremsbeläge und Bremsflüssigkeit' },
-  { value: 'repair', label: 'Reparatur', description: 'Defekte beheben' },
-  { value: 'inspection', label: 'Inspektion', description: 'Nur Überprüfung' },
-];
-
 export default function VehicleEntry() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
-  const [customTemplates, setCustomTemplates] = useState<ServiceTemplate[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<ServiceTemplate[]>([]);
   const [formData, setFormData] = useState<StepData>({
     vehiclePhoto: null,
     documentPhoto: null,
@@ -98,9 +74,9 @@ export default function VehicleEntry() {
     color: '',
     licensePlate: '',
     mileage: '',
-    serviceType: '',
+    serviceTemplateId: '',
     workDescription: '',
-    vehicleStatus: 'active', // Default to active
+    vehicleStatus: 'active',
     selectedProducts: [],
     customerName: '',
     customerEmail: '',
@@ -112,23 +88,22 @@ export default function VehicleEntry() {
     document: null,
   });
 
-  // Fetch custom service templates
+  // Fetch service templates
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
         const response = await api.get('/service-templates');
-        setCustomTemplates(response.data.filter((t: ServiceTemplate) => t.isActive));
+        setTemplates(response.data.filter((t: ServiceTemplate) => t.isActive));
       } catch (error) {
-        console.log('Could not load custom templates');
+        console.log('Could not load templates');
       }
     };
     fetchTemplates();
   }, []);
 
-  // Calculate total steps based on status
-  // Active: Fotos → VIN → Details → Service → Teile → Kunde → Übersicht (7)
-  // On_hold: Fotos → VIN → Details → Service → Kunde → Übersicht (6)
-  const totalSteps = formData.vehicleStatus === 'on_hold' ? 6 : 7;
+  // Both statuses: Fotos → VIN → Details → Service → Teile → Kunde → Übersicht (7)
+  const totalSteps = 7;
+  const selectedTemplate = templates.find(t => t.id === formData.serviceTemplateId);
 
   const handlePhotoUpload = (type: 'vehicle' | 'document', file: File | null) => {
     if (file) {
@@ -264,14 +239,14 @@ export default function VehicleEntry() {
   };
 
   const handleSubmit = async () => {
-    if (!formData.vin || !formData.serviceType) {
+    if (!formData.vin || !formData.serviceTemplateId) {
       toast.error('Bitte füllen Sie alle Pflichtfelder aus');
       return;
     }
 
     setIsLoading(true);
     try {
-      const vehicleData = {
+      const vehicleData: any = {
         vin: formData.vin,
         brand: formData.brand || undefined,
         model: formData.model || undefined,
@@ -279,7 +254,7 @@ export default function VehicleEntry() {
         color: formData.color || undefined,
         licensePlate: formData.licensePlate || undefined,
         mileage: formData.mileage ? parseInt(formData.mileage) : undefined,
-        serviceType: formData.serviceType,
+        serviceTemplateId: formData.serviceTemplateId,
         workDescription: formData.workDescription || undefined,
         customerName: formData.customerName || undefined,
         customerEmail: formData.customerEmail || undefined,
@@ -287,6 +262,24 @@ export default function VehicleEntry() {
         status: formData.vehicleStatus,
         isActive: true,
       };
+
+      // For draft vehicles, save selected products as selectedParts (with raw data for ordering later)
+      if (formData.vehicleStatus === 'on_hold' && formData.selectedProducts.length > 0) {
+        vehicleData.selectedParts = formData.selectedProducts.map(p => ({
+          id: p.id,
+          articleNumber: p.articleNumber,
+          name: p.name,
+          supplier: p.supplier,
+          brand: p.brand,
+          categoryName: p.categoryName,
+          price: p.price,
+          quantity: p.quantity,
+          images: p.images,
+          _rawArticle: p._rawArticle,
+          _rawCategory: p._rawCategory,
+          _rawVehicle: p._rawVehicle,
+        }));
+      }
 
       const vehicleResponse = await api.post('/vehicles', vehicleData);
       const vehicleId = vehicleResponse.data.id;
@@ -310,8 +303,9 @@ export default function VehicleEntry() {
         });
       }
 
-      // Only create expenses if status is active and products are selected
+      // Only create expenses and order if status is active and products are selected
       if (formData.vehicleStatus === 'active' && formData.selectedProducts.length > 0) {
+        // 1. Create expense records
         for (const product of formData.selectedProducts) {
           await api.post('/expenses', {
             vehicleId: vehicleId,
@@ -322,15 +316,40 @@ export default function VehicleEntry() {
             notes: `Derendinger Artikel-ID: ${product.id}`,
           });
         }
-        toast.success(`${formData.selectedProducts.length} Ersatzteile bestellt!`);
+
+        // 2. Place actual Derendinger order (cart/add each item → order/place)
+        const productsWithRaw = formData.selectedProducts.filter(p => p._rawArticle && p._rawCategory);
+        if (productsWithRaw.length > 0) {
+          try {
+            for (const product of productsWithRaw) {
+              await api.post('/derendinger/cart/add', {
+                rawArticle: product._rawArticle,
+                rawCategory: product._rawCategory,
+                rawVehicle: product._rawVehicle,
+                quantity: product.quantity,
+              });
+            }
+            const orderRes = await api.post('/derendinger/order/place', {
+              reference: `${formData.licensePlate || formData.vin}`,
+            });
+            if (orderRes.data.success) {
+              toast.success(`Derendinger-Bestellung erfolgreich! ${orderRes.data.orderNumber ? `Nr: ${orderRes.data.orderNumber}` : ''}`);
+            }
+          } catch (orderErr: any) {
+            console.error('Derendinger order error:', orderErr);
+            toast.error('Teile konnten nicht bei Derendinger bestellt werden: ' + (orderErr.response?.data?.message || orderErr.message));
+          }
+        } else {
+          toast.success(`${formData.selectedProducts.length} Ersatzteile als Ausgaben erfasst`);
+        }
       }
 
       if (formData.vehicleStatus === 'on_hold') {
-        toast.success('Fahrzeug erfasst - Offerte wird erstellt');
+        toast.success('Fahrzeug erfasst - Offerte kann erstellt werden');
       } else {
         toast.success('Fahrzeug erfasst - Arbeiten können beginnen!');
       }
-      
+
       navigate(`/vehicles/${vehicleId}`);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Fehler beim Erfassen des Fahrzeugs');
@@ -341,44 +360,18 @@ export default function VehicleEntry() {
 
   const canProceed = () => {
     switch (currentStep) {
-      case 1:
-        return true;
-      case 2:
-        return formData.vin.length === 17;
-      case 3:
-        return formData.brand && formData.model;
-      case 4:
-        return formData.serviceType !== '';
-      case 5:
-        // If on_hold: this is customer step
-        // If active: this is products step (always can proceed)
-        if (formData.vehicleStatus === 'on_hold') {
-          return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
-        }
-        return true;
-      case 6:
-        // If on_hold: this is summary step (always true)
-        // If active: this is customer step
-        if (formData.vehicleStatus === 'on_hold') {
-          return true;
-        }
-        return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
-      case 7:
-        // Only reached if active: summary step (always true)
-        return true;
-      default:
-        return false;
+      case 1: return true;
+      case 2: return formData.vin.length === 17;
+      case 3: return !!(formData.brand && formData.model);
+      case 4: return formData.serviceTemplateId !== '';
+      case 5: return true; // Products step - always can proceed
+      case 6: return formData.customerName.trim() !== '' && formData.customerEmail.trim() !== '';
+      case 7: return true; // Summary
+      default: return false;
     }
   };
 
-  const getStepLabels = () => {
-    if (formData.vehicleStatus === 'on_hold') {
-      return ['Fotos', 'VIN', 'Details', 'Service', 'Kunde', 'Übersicht'];
-    }
-    return ['Fotos', 'VIN', 'Details', 'Service', 'Teile', 'Kunde', 'Übersicht'];
-  };
-
-  const stepLabels = getStepLabels();
+  const stepLabels = ['Fotos', 'VIN', 'Details', 'Service', 'Teile', 'Kunde', 'Übersicht'];
 
   return (
     <div className="min-h-screen bg-neutral-50 p-4 pb-24">
@@ -709,13 +702,13 @@ export default function VehicleEntry() {
                       </div>
                     </div>
                     <p className="text-sm text-gray-600">
-                      Arbeiten können sofort beginnen. Ersatzteile werden automatisch bestellt.
+                      Arbeiten können sofort beginnen. Ersatzteile werden bestellt.
                     </p>
                   </button>
-                  
+
                   <button
                     type="button"
-                    onClick={() => setFormData((prev) => ({ ...prev, vehicleStatus: 'on_hold', selectedProducts: [] }))}
+                    onClick={() => setFormData((prev) => ({ ...prev, vehicleStatus: 'on_hold' }))}
                     className={`p-4 rounded-xl border-2 text-left transition-all ${
                       formData.vehicleStatus === 'on_hold'
                         ? 'border-amber-500 bg-amber-50'
@@ -734,7 +727,7 @@ export default function VehicleEntry() {
                       </div>
                     </div>
                     <p className="text-sm text-gray-600">
-                      Erst Offerte an Kunde senden. Nach Bestätigung wird das Fahrzeug aktiviert.
+                      Erst Offerte senden. Teile werden erst nach Aktivierung bestellt.
                     </p>
                   </button>
                 </div>
@@ -742,64 +735,77 @@ export default function VehicleEntry() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-3">
-                  Service-Typ *
+                  Service-Vorlage *
                 </label>
-                
-                {/* Predefined Service Types */}
-                <div className="mb-4">
-                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2 font-semibold">
-                    Standard Services
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {SERVICE_TYPES.map((service) => (
-                      <button
-                        key={service.value}
-                        type="button"
-                        onClick={() => {
-                          setFormData((prev) => ({ ...prev, serviceType: service.value }));
-                          setSelectedTemplateId(null);
-                        }}
-                        className={`p-4 rounded-lg border-2 text-left transition-all ${
-                          formData.serviceType === service.value && !selectedTemplateId
-                            ? 'border-primary-500 bg-primary-50'
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="font-medium text-gray-900">{service.label}</div>
-                        <div className="text-sm text-gray-600 mt-1">{service.description}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
 
-                {/* Custom Service Templates */}
-                {customTemplates.length > 0 && (
+                {/* Default templates */}
+                {templates.filter(t => t.isDefault).length > 0 && (
+                  <div className="mb-4">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-2 font-semibold">
+                      Standard Services
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {templates.filter(t => t.isDefault).map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => setFormData((prev) => ({ ...prev, serviceTemplateId: template.id }))}
+                          className={`p-4 rounded-lg border-2 text-left transition-all ${
+                            formData.serviceTemplateId === template.id
+                              ? 'border-primary-500 bg-primary-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="font-medium text-gray-900">{template.name}</div>
+                          {template.description && (
+                            <div className="text-sm text-gray-600 mt-1">{template.description}</div>
+                          )}
+                          <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                            <span>~{template.estimatedHours}h</span>
+                            {(template.customArticles?.length || 0) > 0 && (
+                              <span className="flex items-center gap-1">
+                                <ShoppingBag className="w-3 h-3" />
+                                {template.customArticles.length} Artikel
+                              </span>
+                            )}
+                            {(template.parts?.length || 0) > 0 && (
+                              <span className="flex items-center gap-1">
+                                <Package className="w-3 h-3" />
+                                {template.parts.length} Teile
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom templates */}
+                {templates.filter(t => !t.isDefault).length > 0 && (
                   <div>
                     <p className="text-xs text-gray-500 uppercase tracking-wide mb-2 font-semibold flex items-center gap-2">
                       <Wrench className="w-3 h-3" />
                       Eigene Vorlagen
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {customTemplates.map((template) => (
+                      {templates.filter(t => !t.isDefault).map((template) => (
                         <button
                           key={template.id}
                           type="button"
-                          onClick={() => {
-                            setFormData((prev) => ({ ...prev, serviceType: `custom:${template.id}` }));
-                            setSelectedTemplateId(template.id);
-                          }}
+                          onClick={() => setFormData((prev) => ({ ...prev, serviceTemplateId: template.id }))}
                           className={`p-4 rounded-lg border-2 text-left transition-all ${
-                            selectedTemplateId === template.id
+                            formData.serviceTemplateId === template.id
                               ? 'border-purple-500 bg-purple-50'
                               : 'border-gray-200 hover:border-gray-300'
                           }`}
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-                              selectedTemplateId === template.id ? 'bg-purple-500' : 'bg-gray-200'
+                              formData.serviceTemplateId === template.id ? 'bg-purple-500' : 'bg-gray-200'
                             }`}>
                               <Wrench className={`w-3 h-3 ${
-                                selectedTemplateId === template.id ? 'text-white' : 'text-gray-500'
+                                formData.serviceTemplateId === template.id ? 'text-white' : 'text-gray-500'
                               }`} />
                             </div>
                             <div className="font-medium text-gray-900">{template.name}</div>
@@ -808,11 +814,19 @@ export default function VehicleEntry() {
                             <div className="text-sm text-gray-600 mt-1">{template.description}</div>
                           )}
                           <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                            <span className="flex items-center gap-1">
-                              <Package className="w-3 h-3" />
-                              {template.parts?.length || 0} Teile
-                            </span>
                             <span>~{template.estimatedHours}h</span>
+                            {(template.customArticles?.length || 0) > 0 && (
+                              <span className="flex items-center gap-1">
+                                <ShoppingBag className="w-3 h-3" />
+                                {template.customArticles.length} Artikel
+                              </span>
+                            )}
+                            {(template.parts?.length || 0) > 0 && (
+                              <span className="flex items-center gap-1">
+                                <Package className="w-3 h-3" />
+                                {template.parts.length} Teile
+                              </span>
+                            )}
                           </div>
                         </button>
                       ))}
@@ -838,70 +852,76 @@ export default function VehicleEntry() {
             </div>
           )}
 
-          {/* Step 5: Products (only if active) or Customer (if on_hold) */}
-          {currentStep === 5 && formData.vehicleStatus === 'active' && (
+          {/* Step 5: Products (for both active and on_hold) */}
+          {currentStep === 5 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold mb-2">Schritt 5: Ersatzteile auswählen</h2>
-                <p className="text-gray-600">Passende Teile für Ihr Fahrzeug von Derendinger</p>
+                <p className="text-gray-600">
+                  {formData.vehicleStatus === 'on_hold'
+                    ? 'Teile auswählen für Preisberechnung (Bestellung erst nach Aktivierung)'
+                    : 'Passende Teile für Ihr Fahrzeug von Derendinger'}
+                </p>
               </div>
 
-              {/* Custom template parts info */}
-              {selectedTemplateId && (() => {
-                const template = customTemplates.find(t => t.id === selectedTemplateId);
-                if (template && template.parts && template.parts.length > 0) {
-                  return (
-                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-8 h-8 bg-purple-500 rounded-lg flex items-center justify-center">
-                          <Wrench className="w-4 h-4 text-white" />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-purple-900">Vorlage: {template.name}</p>
-                          <p className="text-xs text-purple-700">Diese Vorlage enthält vordefinierte Teile</p>
-                        </div>
-                      </div>
-                      <div className="bg-white rounded-lg p-3 border border-purple-100">
-                        <p className="text-xs font-medium text-gray-500 mb-2">Vordefinierte Teile:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {template.parts.map((part, i) => (
-                            <span 
-                              key={i}
-                              className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-sm"
-                            >
-                              {part.quantity}x {part.name}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <p className="text-xs text-purple-700 mt-3">
-                        Die passenden Artikel werden basierend auf Ihrem Fahrzeug von Derendinger geladen.
-                      </p>
+              {/* Status info banner */}
+              {formData.vehicleStatus === 'on_hold' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                  <Pause className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium text-amber-900">Nur Preise — keine Bestellung</p>
+                    <p className="text-sm text-amber-700 mt-0.5">
+                      Da das Fahrzeug als "Wartend" markiert ist, werden die Teile nur für die Offerte ausgewählt.
+                      Die Bestellung erfolgt erst nach Aktivierung des Fahrzeugs.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Template parts info */}
+              {selectedTemplate && selectedTemplate.parts && selectedTemplate.parts.length > 0 && (
+                <div className="bg-primary-50 border border-primary-200 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-8 h-8 bg-primary-500 rounded-lg flex items-center justify-center">
+                      <Wrench className="w-4 h-4 text-white" />
                     </div>
-                  );
-                }
-                return null;
-              })()}
+                    <div>
+                      <p className="font-semibold text-primary-900">Vorlage: {selectedTemplate.name}</p>
+                      <p className="text-xs text-primary-700">Diese Vorlage enthält vordefinierte Teile</p>
+                    </div>
+                  </div>
+                  <div className="bg-white rounded-lg p-3 border border-primary-100">
+                    <p className="text-xs font-medium text-gray-500 mb-2">Vordefinierte Teile:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTemplate.parts.map((part, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-1 bg-primary-100 text-primary-800 rounded text-sm"
+                        >
+                          {part.quantity}x {part.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <DerendingerProductPicker
                 vin={formData.vin}
-                serviceType={selectedTemplateId ? 'big_service' : formData.serviceType}
+                serviceType="big_service"
                 selectedProducts={formData.selectedProducts}
-                onProductsSelected={(products) => 
+                onProductsSelected={(products) =>
                   setFormData((prev) => ({ ...prev, selectedProducts: products }))
                 }
               />
             </div>
           )}
 
-          {/* Customer Info - Step 5 for on_hold, Step 6 for active */}
-          {((currentStep === 5 && formData.vehicleStatus === 'on_hold') ||
-            (currentStep === 6 && formData.vehicleStatus === 'active')) && (
+          {/* Customer Info - Step 6 */}
+          {currentStep === 6 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">
-                  Schritt {formData.vehicleStatus === 'on_hold' ? 5 : 6}: Kundeninformationen
-                </h2>
+                <h2 className="text-2xl font-bold mb-2">Schritt 6: Kundeninformationen</h2>
                 <p className="text-gray-600">Kundendaten erfassen (aus Fahrzeugausweis)</p>
               </div>
 
@@ -985,12 +1005,9 @@ export default function VehicleEntry() {
             </div>
           )}
 
-          {/* Summary Step - Step 6 for on_hold, Step 7 for active */}
-          {((currentStep === 6 && formData.vehicleStatus === 'on_hold') ||
-            (currentStep === 7 && formData.vehicleStatus === 'active')) && (() => {
-            const serviceLabel = SERVICE_TYPES.find(s => s.value === formData.serviceType)?.label
-              || customTemplates.find(t => `custom:${t.id}` === formData.serviceType)?.name
-              || formData.serviceType;
+          {/* Summary Step - Step 7 */}
+          {currentStep === 7 && (() => {
+            const serviceLabel = selectedTemplate?.name || '-';
             const getPrice = (p: SelectedProduct) => p.price?.net1Price || p.price?.grossPrice || 0;
             const getRetail = (p: SelectedProduct) => p.price?.grossPrice || p.price?.uvpePrice || 0;
             const totalCost = formData.selectedProducts.reduce((sum, p) => sum + getPrice(p) * p.quantity, 0);
@@ -1000,7 +1017,7 @@ export default function VehicleEntry() {
               <div className="space-y-6">
                 <div>
                   <h2 className="text-2xl font-bold mb-2">
-                    Schritt {formData.vehicleStatus === 'on_hold' ? 6 : 7}: Übersicht
+                    Schritt 7: Übersicht
                   </h2>
                   <p className="text-gray-600">Bitte prüfen Sie alle Angaben vor dem Erfassen</p>
                 </div>
@@ -1038,8 +1055,8 @@ export default function VehicleEntry() {
                   </div>
                 </div>
 
-                {/* Parts (only for active with selected products) */}
-                {formData.vehicleStatus === 'active' && formData.selectedProducts.length > 0 && (
+                {/* Parts */}
+                {formData.selectedProducts.length > 0 && (
                   <div className="bg-gray-50 rounded-xl p-4">
                     <h3 className="font-semibold text-gray-900 mb-3">Ersatzteile</h3>
                     <div className="overflow-x-auto">

@@ -703,6 +703,7 @@ export default function AppointmentsCalendar() {
                   <input
                     type="date"
                     value={formData.date}
+                    min={format(new Date(), 'yyyy-MM-dd')}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     className="input"
                   />

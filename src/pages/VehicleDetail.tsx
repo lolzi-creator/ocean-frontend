@@ -8,21 +8,20 @@ import {
   Clock,
   FileText,
   Edit,
-  Calendar,
-  Wrench,
   Image as ImageIcon,
   User,
   DollarSign,
   Package,
-  Plus,
   Receipt,
   FileCheck,
-  AlertCircle,
   ExternalLink,
   FileImage,
   X,
+  Download,
+  TrendingUp,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import CreateInvoiceModal from '../components/CreateInvoiceModal';
 
 interface Vehicle {
   id: string;
@@ -41,6 +40,10 @@ interface Vehicle {
   licensePlate?: string;
   workDescription?: string;
   serviceType?: string;
+  serviceTemplateId?: string;
+  serviceTemplate?: any;
+  selectedParts?: any;
+  status?: string;
   color?: string;
   mileage?: number;
   photoUrl?: string;
@@ -48,6 +51,9 @@ interface Vehicle {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
 }
 
 interface TimeLog {
@@ -70,6 +76,7 @@ interface Invoice {
   total: number;
   createdAt: string;
   customerName: string;
+  pdfUrl?: string;
 }
 
 interface Expense {
@@ -90,16 +97,7 @@ export default function VehicleDetail() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'timelogs' | 'invoices' | 'expenses'>('overview');
-  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [showEstimateModal, setShowEstimateModal] = useState(false);
-  const [invoiceForm, setInvoiceForm] = useState({
-    customerName: '',
-    customerEmail: '',
-    customerAddress: '',
-  });
-  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
-  const [isCreatingEstimate, setIsCreatingEstimate] = useState(false);
-  const [servicePackage, setServicePackage] = useState<any>(null);
+  const [invoiceModalType, setInvoiceModalType] = useState<'estimate' | 'invoice' | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -110,23 +108,6 @@ export default function VehicleDetail() {
       fetchExpenses();
     }
   }, [id]);
-
-  useEffect(() => {
-    if (vehicle?.serviceType) {
-      // Service package info (matches backend service-packages.ts)
-      const packages: Record<string, any> = {
-        small_service: { estimatedHours: 1.5, name: 'Kleine Wartung', description: 'Ölwechsel, Filter, Inspektion' },
-        big_service: { estimatedHours: 4.0, name: 'Grosse Wartung', description: 'Vollständige Wartung mit allen Checks' },
-        tire_change: { estimatedHours: 1.0, name: 'Reifenwechsel', description: 'Reifen wechseln und auswuchten' },
-        brake_service: { estimatedHours: 2.5, name: 'Bremsenservice', description: 'Bremsbeläge und Bremsflüssigkeit' },
-        repair: { estimatedHours: 3.0, name: 'Reparatur', description: 'Defekte beheben' },
-        inspection: { estimatedHours: 1.0, name: 'Inspektion', description: 'Nur Überprüfung' },
-      };
-      setServicePackage(packages[vehicle.serviceType] || null);
-    } else {
-      setServicePackage(null);
-    }
-  }, [vehicle?.serviceType]);
 
   const fetchVehicleDetails = async () => {
     try {
@@ -167,66 +148,12 @@ export default function VehicleDetail() {
     }
   };
 
-  const handleCreateEstimate = async () => {
-    if (!invoiceForm.customerName.trim()) {
-      toast.error('Bitte geben Sie einen Kundennamen ein');
-      return;
-    }
-
-    if (!vehicle?.serviceType) {
-      toast.error('Bitte wählen Sie zuerst einen Service-Typ für das Fahrzeug');
-      return;
-    }
-
-    setIsCreatingEstimate(true);
-    try {
-      const response = await api.post(`/vehicles/${id}/create-estimate`, invoiceForm);
-      toast.success('Angebot erfolgreich erstellt!');
-      setShowEstimateModal(false);
-      setInvoiceForm({ customerName: '', customerEmail: '', customerAddress: '' });
-      fetchInvoices();
-      navigate(`/invoices/${response.data.id}`);
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Fehler beim Erstellen des Angebots');
-    } finally {
-      setIsCreatingEstimate(false);
-    }
-  };
-
-  const handleCreateInvoice = async () => {
-    if (!invoiceForm.customerName.trim()) {
-      toast.error('Bitte geben Sie einen Kundennamen ein');
-      return;
-    }
-
-    if (totalHours === 0) {
-      toast.error('Es wurden noch keine Arbeitsstunden erfasst');
-      return;
-    }
-
-    setIsCreatingInvoice(true);
-    try {
-      const response = await api.post(`/vehicles/${id}/create-invoice`, {
-        ...invoiceForm,
-        confirmedHours: totalHours,
-      });
-      toast.success('Rechnung erfolgreich erstellt!');
-      setShowInvoiceModal(false);
-      setInvoiceForm({ customerName: '', customerEmail: '', customerAddress: '' });
-      fetchInvoices();
-      navigate(`/invoices/${response.data.id}`);
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Fehler beim Erstellen der Rechnung');
-    } finally {
-      setIsCreatingInvoice(false);
-    }
-  };
-
   const totalHours = timeLogs.reduce((sum, log) => sum + log.hours, 0);
   const totalRevenue = invoices
-    .filter((inv) => inv.status === 'paid')
+    .filter((inv) => inv.type === 'invoice' && inv.status === 'paid')
     .reduce((sum, inv) => sum + inv.total, 0);
   const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const vehicleProfit = totalRevenue - totalExpenses;
 
   // Group time logs by user
   const timeLogsByUser = timeLogs.reduce((acc, log) => {
@@ -243,23 +170,10 @@ export default function VehicleDetail() {
     return acc;
   }, {} as Record<string, { user: TimeLog['user']; totalHours: number; logs: TimeLog[] }>);
 
-  const getServiceTypeLabel = (type?: string) => {
-    switch (type) {
-      case 'small_service':
-        return 'Kleine Wartung';
-      case 'big_service':
-        return 'Grosse Wartung';
-      case 'tire_change':
-        return 'Reifenwechsel';
-      case 'brake_service':
-        return 'Bremsenservice';
-      case 'repair':
-        return 'Reparatur';
-      case 'inspection':
-        return 'Inspektion';
-      default:
-        return type || 'Nicht angegeben';
-    }
+  const getServiceTypeLabel = () => {
+    if (vehicle?.serviceTemplate?.name) return vehicle.serviceTemplate.name;
+    if (vehicle?.serviceType) return vehicle.serviceType;
+    return 'Nicht angegeben';
   };
 
   if (isLoading) {
@@ -389,7 +303,7 @@ export default function VehicleDetail() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="card">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
@@ -404,18 +318,7 @@ export default function VehicleDetail() {
         <div className="card">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
-              <FileText className="w-5 h-5 text-success-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-neutral-900">{timeLogs.length}</p>
-              <p className="text-xs text-neutral-500">Einträge</p>
-            </div>
-          </div>
-        </div>
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-warning-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="w-5 h-5 text-warning-600" />
+              <DollarSign className="w-5 h-5 text-success-600" />
             </div>
             <div>
               <p className="text-2xl font-bold text-neutral-900">CHF {totalRevenue.toFixed(0)}</p>
@@ -434,66 +337,141 @@ export default function VehicleDetail() {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Quick Stats - now unused but keeping structure */}
-      <div className="hidden grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="card">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="w-6 h-6 text-blue-600" />
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+              vehicleProfit >= 0 ? 'bg-success-100' : 'bg-danger-100'
+            }`}>
+              <TrendingUp className={`w-5 h-5 ${vehicleProfit >= 0 ? 'text-success-600' : 'text-danger-600'}`} />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Rechnungen</p>
-              <p className="text-2xl font-bold text-gray-900">{invoices.length}</p>
+              <p className={`text-2xl font-bold ${vehicleProfit >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
+                CHF {vehicleProfit.toFixed(0)}
+              </p>
+              <p className="text-xs text-neutral-500">Gewinn</p>
             </div>
           </div>
         </div>
         <div className="card">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-              <DollarSign className="w-6 h-6 text-purple-600" />
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <FileText className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <p className="text-sm text-gray-600">Umsatz</p>
-              <p className="text-2xl font-bold text-gray-900">CHF {totalRevenue.toFixed(2)}</p>
-            </div>
-          </div>
-        </div>
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-              <Package className="w-6 h-6 text-orange-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Ausgaben</p>
-              <p className="text-2xl font-bold text-gray-900">CHF {totalExpenses.toFixed(2)}</p>
+              <p className="text-2xl font-bold text-neutral-900">{invoices.length}</p>
+              <p className="text-xs text-neutral-500">Dokumente</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Create Estimate/Invoice Buttons */}
-      <div className="mb-6 flex gap-3 justify-end">
-        {vehicle?.serviceType && (
-          <button
-            onClick={() => setShowEstimateModal(true)}
-            className="btn btn-secondary flex items-center gap-2"
-          >
-            <FileCheck className="w-5 h-5" />
-            Angebot erstellen
-          </button>
-        )}
-        {totalHours > 0 && (
-          <button
-            onClick={() => setShowInvoiceModal(true)}
-            className="btn btn-primary flex items-center gap-2"
-          >
-            <Receipt className="w-5 h-5" />
-            Rechnung erstellen
-          </button>
-        )}
-      </div>
+      {/* Existing Invoices + Create Buttons */}
+      {(() => {
+        const existingInvoices = invoices.filter((i) => i.type === 'invoice');
+        const existingEstimates = invoices.filter((i) => i.type === 'estimate');
+        const invoiceCount = existingInvoices.length;
+        const estimateCount = existingEstimates.length;
+
+        return (
+          <div className="mb-6 space-y-3">
+            {/* Existing documents */}
+            {invoices.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {invoices.map((inv) => (
+                  <div
+                    key={inv.id}
+                    className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  >
+                    <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    <Link
+                      to={`/invoices/${inv.id}`}
+                      state={{ fromVehicle: true, vehicleId: id }}
+                      className="font-medium text-gray-700 hover:text-primary-600 transition-colors"
+                    >
+                      {inv.invoiceNumber}
+                    </Link>
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                      inv.type === 'estimate'
+                        ? 'bg-purple-50 text-purple-600'
+                        : 'bg-blue-50 text-blue-600'
+                    }`}>
+                      {inv.type === 'estimate' ? 'Angebot' : 'Rechnung'}
+                    </span>
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                      inv.status === 'paid'
+                        ? 'bg-green-50 text-green-600'
+                        : inv.status === 'sent'
+                        ? 'bg-blue-50 text-blue-600'
+                        : inv.status === 'cancelled'
+                        ? 'bg-red-50 text-red-600'
+                        : 'bg-gray-50 text-gray-500'
+                    }`}>
+                      {inv.status === 'paid' ? 'Bezahlt' : inv.status === 'sent' ? 'Gesendet' : inv.status === 'cancelled' ? 'Storniert' : 'Entwurf'}
+                    </span>
+                    {inv.pdfUrl && (
+                      <a
+                        href={inv.pdfUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-1 hover:bg-gray-100 rounded transition-colors text-gray-400 hover:text-primary-600"
+                        title="PDF herunterladen"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Create buttons - conditional on vehicle status */}
+            <div className="flex gap-3 justify-end">
+              {/* Estimate button: only for on_hold (draft) vehicles with a template */}
+              {(vehicle?.status === 'on_hold') && (vehicle?.serviceTemplateId || vehicle?.serviceType) && (
+                <button
+                  onClick={() => setInvoiceModalType('estimate')}
+                  className="btn btn-secondary flex items-center gap-2"
+                >
+                  <FileCheck className="w-5 h-5" />
+                  {estimateCount > 0 ? `${estimateCount + 1}. ` : ''}Angebot erstellen
+                </button>
+              )}
+              {/* Invoice button: only for active vehicles */}
+              {(vehicle?.status === 'active') && (
+                <button
+                  onClick={() => setInvoiceModalType('invoice')}
+                  className="btn btn-primary flex items-center gap-2"
+                >
+                  <Receipt className="w-5 h-5" />
+                  {invoiceCount > 0 ? `${invoiceCount + 1}. ` : ''}Rechnung erstellen
+                </button>
+              )}
+              {/* Completed vehicles: both buttons available */}
+              {(vehicle?.status === 'completed') && (
+                <>
+                  {(vehicle?.serviceTemplateId || vehicle?.serviceType) && (
+                    <button
+                      onClick={() => setInvoiceModalType('estimate')}
+                      className="btn btn-secondary flex items-center gap-2"
+                    >
+                      <FileCheck className="w-5 h-5" />
+                      Angebot erstellen
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setInvoiceModalType('invoice')}
+                    className="btn btn-primary flex items-center gap-2"
+                  >
+                    <Receipt className="w-5 h-5" />
+                    Rechnung erstellen
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Tabs */}
       <div className="card">
@@ -573,10 +551,10 @@ export default function VehicleDetail() {
                     <p className="font-medium">{vehicle.mileage.toLocaleString('de-CH')} km</p>
                   </div>
                 )}
-                {vehicle.serviceType && (
+                {(vehicle.serviceTemplate || vehicle.serviceType) && (
                   <div>
-                    <p className="text-sm text-gray-500">Service-Typ</p>
-                    <p className="font-medium">{getServiceTypeLabel(vehicle.serviceType)}</p>
+                    <p className="text-sm text-gray-500">Service-Vorlage</p>
+                    <p className="font-medium">{getServiceTypeLabel()}</p>
                   </div>
                 )}
               </div>
@@ -649,12 +627,16 @@ export default function VehicleDetail() {
                   <p className="text-sm text-gray-500">Status</p>
                   <span
                     className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-                      vehicle.isActive
+                      vehicle.status === 'active'
                         ? 'bg-green-100 text-green-700'
+                        : vehicle.status === 'on_hold'
+                        ? 'bg-amber-100 text-amber-700'
+                        : vehicle.status === 'completed'
+                        ? 'bg-blue-100 text-blue-700'
                         : 'bg-gray-100 text-gray-700'
                     }`}
                   >
-                    {vehicle.isActive ? 'Aktiv' : 'Inaktiv'}
+                    {vehicle.status === 'active' ? 'Aktiv' : vehicle.status === 'on_hold' ? 'Wartend' : vehicle.status === 'completed' ? 'Abgeschlossen' : 'Inaktiv'}
                   </span>
                 </div>
               </div>
@@ -888,182 +870,23 @@ export default function VehicleDetail() {
         )}
       </div>
 
-      {/* Create Estimate Modal */}
-      {showEstimateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-4">Angebot erstellen</h2>
-            {servicePackage && (
-              <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <p className="text-sm font-semibold text-blue-900 mb-2">
-                  Service: {servicePackage.name}
-                </p>
-                <p className="text-sm text-blue-700">
-                  Geschätzte Arbeitszeit: <strong>{servicePackage.estimatedHours}h</strong>
-                </p>
-                <p className="text-xs text-blue-600 mt-2">
-                  Das Angebot enthält automatisch alle Ausgaben für diesen Service sowie die geschätzten Arbeitsstunden.
-                </p>
-              </div>
-            )}
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Kundename <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={invoiceForm.customerName}
-                  onChange={(e) =>
-                    setInvoiceForm({ ...invoiceForm, customerName: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="Max Mustermann"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  E-Mail (optional)
-                </label>
-                <input
-                  type="email"
-                  value={invoiceForm.customerEmail}
-                  onChange={(e) =>
-                    setInvoiceForm({ ...invoiceForm, customerEmail: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="max@example.com"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Adresse (optional)
-                </label>
-                <textarea
-                  value={invoiceForm.customerAddress}
-                  onChange={(e) =>
-                    setInvoiceForm({ ...invoiceForm, customerAddress: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  rows={3}
-                  placeholder="Musterstrasse 1, 8000 Zürich"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex gap-3 justify-end">
-              <button
-                onClick={() => {
-                  setShowEstimateModal(false);
-                  setInvoiceForm({ customerName: '', customerEmail: '', customerAddress: '' });
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                disabled={isCreatingEstimate}
-              >
-                Abbrechen
-              </button>
-              <button
-                onClick={handleCreateEstimate}
-                className="btn btn-primary"
-                disabled={isCreatingEstimate}
-              >
-                {isCreatingEstimate ? 'Erstelle...' : 'Angebot erstellen'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Create Invoice Modal */}
-      {showInvoiceModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
-            <h2 className="text-2xl font-bold mb-4">Rechnung erstellen</h2>
-            
-            {/* Confirmation Warning */}
-            <div className="mb-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200 flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-yellow-900 mb-1">
-                  Bestätigung erforderlich
-                </p>
-                <p className="text-sm text-yellow-700 mb-2">
-                  Sind Sie sicher, dass die Arbeit abgeschlossen ist?
-                </p>
-                <div className="text-sm text-yellow-700 space-y-1">
-                  <p><strong>Erfasste Arbeitsstunden:</strong> {totalHours.toFixed(2)}h</p>
-                  <p><strong>Ausgaben:</strong> CHF {totalExpenses.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
-
-            <p className="text-sm text-gray-600 mb-6">
-              Die Rechnung wird automatisch aus den Ausgaben und erfassten Arbeitsstunden erstellt.
-            </p>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Kundename <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={invoiceForm.customerName}
-                  onChange={(e) =>
-                    setInvoiceForm({ ...invoiceForm, customerName: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="Max Mustermann"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  E-Mail (optional)
-                </label>
-                <input
-                  type="email"
-                  value={invoiceForm.customerEmail}
-                  onChange={(e) =>
-                    setInvoiceForm({ ...invoiceForm, customerEmail: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="max@example.com"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Adresse (optional)
-                </label>
-                <textarea
-                  value={invoiceForm.customerAddress}
-                  onChange={(e) =>
-                    setInvoiceForm({ ...invoiceForm, customerAddress: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  rows={3}
-                  placeholder="Musterstrasse 1, 8000 Zürich"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex gap-3 justify-end">
-              <button
-                onClick={() => {
-                  setShowInvoiceModal(false);
-                  setInvoiceForm({ customerName: '', customerEmail: '', customerAddress: '' });
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                disabled={isCreatingInvoice}
-              >
-                Abbrechen
-              </button>
-              <button
-                onClick={handleCreateInvoice}
-                className="btn btn-primary"
-                disabled={isCreatingInvoice}
-              >
-                {isCreatingInvoice ? 'Erstelle...' : 'Rechnung erstellen'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Create Invoice/Estimate Modal */}
+      {invoiceModalType && vehicle && (
+        <CreateInvoiceModal
+          isOpen={!!invoiceModalType}
+          vehicle={vehicle}
+          type={invoiceModalType}
+          ordinal={
+            (invoiceModalType === 'invoice'
+              ? invoices.filter((i) => i.type === 'invoice').length
+              : invoices.filter((i) => i.type === 'estimate').length) + 1
+          }
+          onClose={() => setInvoiceModalType(null)}
+          onCreated={() => {
+            fetchInvoices();
+            setInvoiceModalType(null);
+          }}
+        />
       )}
     </div>
   );

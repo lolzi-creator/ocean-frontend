@@ -17,6 +17,9 @@ export interface Vehicle {
   licensePlate?: string;
   workDescription?: string;
   serviceType?: string;
+  serviceTemplateId?: string;
+  serviceTemplate?: ServiceTemplate;
+  selectedParts?: any;
   color?: string;
   mileage?: number;
   customerName?: string;
@@ -59,6 +62,8 @@ export interface Invoice {
   taxAmount: number;
   total: number;
   notes?: string;
+  paymentMethod: 'cash' | 'qr_invoice';
+  paymentReference?: string;
   createdAt: string;
   vehicle: {
     id: string;
@@ -66,6 +71,15 @@ export interface Invoice {
     brand?: string;
     model?: string;
   };
+}
+
+export interface CompanyBankingDetails {
+  companyName: string;
+  street: string;
+  zip: string;
+  city: string;
+  country: string;
+  iban: string;
 }
 
 export interface Expense {
@@ -179,6 +193,7 @@ export interface InvoiceFormData {
   customerAddress: string;
   taxRate: string;
   notes: string;
+  paymentMethod: 'cash' | 'qr_invoice';
   items: Array<{
     description: string;
     quantity: string;
@@ -217,6 +232,13 @@ export interface ServiceTemplatePart {
   name: string;
   functionalGroup?: string;
   quantity: number;
+  unitPrice?: number;
+}
+
+export interface CustomArticle {
+  description: string;
+  quantity: number;
+  unitPrice: number;
 }
 
 export interface ServiceTemplate {
@@ -224,7 +246,10 @@ export interface ServiceTemplate {
   name: string;
   description?: string;
   estimatedHours: number;
+  hourlyRate: number;
+  isDefault: boolean;
   parts: ServiceTemplatePart[];
+  customArticles: CustomArticle[];
   isActive: boolean;
   createdBy?: {
     id: string;

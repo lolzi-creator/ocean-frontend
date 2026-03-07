@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
@@ -18,6 +18,7 @@ export default function WorkerSelection() {
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(true);
+  const formRef = useRef<HTMLFormElement>(null);
   const navigate = useNavigate();
   const { setCurrentWorker } = useAuth();
 
@@ -159,7 +160,7 @@ export default function WorkerSelection() {
 
           {/* PIN Input */}
           {selectedWorker && (
-            <form onSubmit={handlePinSubmit} className="space-y-4">
+            <form ref={formRef} onSubmit={handlePinSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                   PIN für {selectedWorker.name}
@@ -171,7 +172,13 @@ export default function WorkerSelection() {
                     inputMode="numeric"
                     maxLength={4}
                     value={pin}
-                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setPin(val);
+                      if (val.length === 4) {
+                        setTimeout(() => formRef.current?.requestSubmit(), 0);
+                      }
+                    }}
                     placeholder="••••"
                     className="input pl-10 text-center text-xl font-mono tracking-[0.5em]"
                     autoFocus

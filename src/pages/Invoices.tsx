@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { FileText, Edit, Trash2, X, Send, Clock, Check, FileDown, Car, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, Trash2, X, Send, Clock, Check, FileDown, ChevronUp, ChevronDown, TrendingUp, Receipt, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { useDateFilter, useVehicles } from '../hooks';
 
@@ -25,6 +25,9 @@ interface Invoice {
   taxAmount: number;
   total: number;
   notes?: string;
+  paymentMethod: 'cash' | 'qr_invoice';
+  paymentReference?: string;
+  paidAt?: string;
   createdAt: string;
   vehicle: {
     id: string;
@@ -34,29 +37,18 @@ interface Invoice {
   };
 }
 
-// Vehicle interface imported from hooks
+type SortField = 'date' | 'number' | 'customer' | 'vehicle' | 'total' | 'status';
+type SortDir = 'asc' | 'desc';
 
 export default function Invoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [filterType, setFilterType] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterVehicle, setFilterVehicle] = useState<string>('all');
-  const [groupByVehicle, setGroupByVehicle] = useState<boolean>(true);
-  const [expandedVehicles, setExpandedVehicles] = useState<Set<string>>(new Set());
-  const [formData, setFormData] = useState({
-    type: 'estimate',
-    vehicleId: '',
-    customerName: '',
-    customerEmail: '',
-    customerAddress: '',
-    taxRate: '19',
-    notes: '',
-    items: [{ description: '', quantity: '1', unitPrice: '0', total: '0' }],
-  });
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  // Use shared hooks
   const { filterPeriod, setFilterPeriod, filterByDate } = useDateFilter('all');
   const { activeVehicles: vehicles } = useVehicles();
 
@@ -71,8 +63,6 @@ export default function Invoices() {
 
       const response = await api.get('/invoices', { params });
       const allInvoices: Invoice[] = response.data;
-
-      // Use the shared date filter
       const filtered = filterByDate(allInvoices, (inv) => new Date(inv.createdAt));
       setInvoices(filtered);
     } catch (error) {
@@ -82,103 +72,8 @@ export default function Invoices() {
     }
   };
 
-  const calculateItemTotal = (quantity: string, unitPrice: string) => {
-    return (parseFloat(quantity) || 0) * (parseFloat(unitPrice) || 0);
-  };
-
-  const updateItem = (index: number, field: string, value: string) => {
-    const newItems = [...formData.items];
-    newItems[index] = {
-      ...newItems[index],
-      [field]: value,
-      total: field === 'quantity' || field === 'unitPrice'
-        ? calculateItemTotal(
-            field === 'quantity' ? value : newItems[index].quantity,
-            field === 'unitPrice' ? value : newItems[index].unitPrice
-          ).toString()
-        : newItems[index].total,
-    };
-    setFormData({ ...formData, items: newItems });
-  };
-
-  const addItem = () => {
-    setFormData({
-      ...formData,
-      items: [...formData.items, { description: '', quantity: '1', unitPrice: '0', total: '0' }],
-    });
-  };
-
-  const removeItem = (index: number) => {
-    if (formData.items.length > 1) {
-      setFormData({
-        ...formData,
-        items: formData.items.filter((_, i) => i !== index),
-      });
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const items = formData.items.map((item) => ({
-      description: item.description,
-      quantity: parseFloat(item.quantity),
-      unitPrice: parseFloat(item.unitPrice),
-      total: parseFloat(item.total),
-    }));
-
-    try {
-      const payload = {
-        type: formData.type,
-        vehicleId: formData.vehicleId,
-        customerName: formData.customerName,
-        customerEmail: formData.customerEmail || undefined,
-        customerAddress: formData.customerAddress || undefined,
-        items,
-        taxRate: parseFloat(formData.taxRate),
-        notes: formData.notes || undefined,
-      };
-
-      if (editingInvoice) {
-        await api.patch(`/invoices/${editingInvoice.id}`, payload);
-        toast.success('Rechnung erfolgreich aktualisiert');
-      } else {
-        await api.post('/invoices', payload);
-        toast.success('Rechnung erfolgreich erstellt');
-      }
-
-      setEditingInvoice(null);
-      resetForm();
-      fetchInvoices();
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Rechnung konnte nicht gespeichert werden');
-    }
-  };
-
-  const handleEdit = (invoice: Invoice) => {
-    setEditingInvoice(invoice);
-    setFormData({
-      type: invoice.type,
-      vehicleId: invoice.vehicle.id,
-      customerName: invoice.customerName,
-      customerEmail: invoice.customerEmail || '',
-      customerAddress: invoice.customerAddress || '',
-      taxRate: invoice.taxRate.toString(),
-      notes: invoice.notes || '',
-      items: invoice.items.map((item) => ({
-        description: item.description,
-        quantity: item.quantity.toString(),
-        unitPrice: item.unitPrice.toString(),
-        total: item.total.toString(),
-      })),
-    });
-    // Note: Full editing should be done via detail page
-    // This is kept for status updates only
-  };
-
   const handleDelete = async (id: string) => {
     if (!confirm('Sind Sie sicher, dass Sie diese Rechnung löschen möchten?')) return;
-
     try {
       await api.delete(`/invoices/${id}`);
       toast.success('Rechnung erfolgreich gelöscht');
@@ -227,104 +122,125 @@ export default function Invoices() {
     toast.success('CSV erfolgreich exportiert');
   };
 
-  const resetForm = () => {
-    setFormData({
-      type: 'estimate',
-      vehicleId: '',
-      customerName: '',
-      customerEmail: '',
-      customerAddress: '',
-      taxRate: '7.7',
-      notes: '',
-      items: [{ description: '', quantity: '1', unitPrice: '0', total: '0' }],
-    });
-    setEditingInvoice(null);
-  };
+  // Deduplicate: keep only the latest invoice per vehicle (by type)
+  const latestInvoices = (() => {
+    const map = new Map<string, Invoice>();
+    // invoices are already sorted desc by createdAt from the API
+    for (const inv of invoices) {
+      const key = `${inv.vehicle.id}_${inv.type}`;
+      if (!map.has(key)) {
+        map.set(key, inv);
+      }
+    }
+    return Array.from(map.values());
+  })();
 
-  const subtotal = formData.items.reduce(
-    (sum, item) => sum + parseFloat(item.total),
-    0
-  );
-  const taxAmount = subtotal * (parseFloat(formData.taxRate) / 100);
-  const total = subtotal + taxAmount;
-
-  const filteredInvoices = invoices.filter((inv) => {
+  // Filtering
+  const filteredInvoices = latestInvoices.filter((inv) => {
     if (filterType !== 'all' && inv.type !== filterType) return false;
     if (filterStatus !== 'all' && inv.status !== filterStatus) return false;
     return true;
   });
 
-  // Group invoices by vehicle
-  const invoicesByVehicle = filteredInvoices.reduce((acc, inv) => {
-    const vehicleId = inv.vehicle?.id || 'no-vehicle';
-    const vehicleKey = vehicleId === 'no-vehicle' 
-      ? 'no-vehicle' 
-      : `${inv.vehicle?.brand || ''} ${inv.vehicle?.model || ''} (${inv.vehicle?.vin || ''})`.trim();
-    
-    if (!acc[vehicleId]) {
-      acc[vehicleId] = {
-        vehicle: inv.vehicle || null,
-        vehicleKey,
-        invoices: [],
-        total: 0,
-      };
-    }
-    acc[vehicleId].invoices.push(inv);
-    acc[vehicleId].total += inv.total;
-    return acc;
-  }, {} as Record<string, { vehicle: { id: string; vin: string; brand?: string; model?: string } | null; vehicleKey: string; invoices: Invoice[]; total: number }>);
-
-  const toggleVehicleGroup = (vehicleId: string) => {
-    setExpandedVehicles((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(vehicleId)) {
-        newSet.delete(vehicleId);
-      } else {
-        newSet.add(vehicleId);
+  // Sorting
+  const sortedInvoices = [...filteredInvoices].sort((a, b) => {
+    let cmp = 0;
+    switch (sortField) {
+      case 'date':
+        cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        break;
+      case 'number':
+        cmp = a.invoiceNumber.localeCompare(b.invoiceNumber);
+        break;
+      case 'customer':
+        cmp = a.customerName.localeCompare(b.customerName);
+        break;
+      case 'vehicle': {
+        const va = a.vehicle.brand && a.vehicle.model ? `${a.vehicle.brand} ${a.vehicle.model}` : a.vehicle.vin;
+        const vb = b.vehicle.brand && b.vehicle.model ? `${b.vehicle.brand} ${b.vehicle.model}` : b.vehicle.vin;
+        cmp = va.localeCompare(vb);
+        break;
       }
-      return newSet;
-    });
-  };
+      case 'total':
+        cmp = a.total - b.total;
+        break;
+      case 'status':
+        cmp = a.status.localeCompare(b.status);
+        break;
+    }
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
 
-  const expandAll = () => {
-    const allVehicleIds = Object.keys(invoicesByVehicle);
-    setExpandedVehicles(new Set(allVehicleIds));
-  };
-
-  const collapseAll = () => {
-    setExpandedVehicles(new Set());
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'draft':
-        return 'badge-gray';
-      case 'sent':
-        return 'badge-info';
-      case 'paid':
-        return 'badge-success';
-      case 'cancelled':
-        return 'badge-danger';
-      default:
-        return 'badge-gray';
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('desc');
     }
   };
 
-  const totalRevenue = invoices
+  // Stats
+  const actualInvoices = invoices.filter(inv => inv.type === 'invoice');
+  const estimates = invoices.filter(inv => inv.type === 'estimate');
+
+  const totalRevenue = actualInvoices
     .filter(inv => inv.status === 'paid')
     .reduce((sum, inv) => sum + inv.total, 0);
-  const pendingAmount = invoices
+  const pendingAmount = actualInvoices
     .filter(inv => inv.status === 'sent')
     .reduce((sum, inv) => sum + inv.total, 0);
-  const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.total, 0);
+  const totalInvoiced = actualInvoices.reduce((sum, inv) => sum + inv.total, 0);
+  const estimatesTotal = estimates.reduce((sum, inv) => sum + inv.total, 0);
+  const estimatesAccepted = estimates.filter(e => e.status === 'paid').length;
+  const estimateConversionRate = estimates.length > 0
+    ? Math.round((estimatesAccepted / estimates.length) * 100)
+    : 0;
+
+  // Overdue detection
+  const OVERDUE_DAYS = 30;
+  const isOverdue = (inv: Invoice) => {
+    if (inv.status !== 'sent' || inv.type !== 'invoice') return false;
+    const daysSinceSent = Math.floor((Date.now() - new Date(inv.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    return daysSinceSent > OVERDUE_DAYS;
+  };
+  const overdueInvoices = actualInvoices.filter(isOverdue);
+  const overdueAmount = overdueInvoices.reduce((sum, inv) => sum + inv.total, 0);
+
+  const statusLabel = (s: string) => {
+    switch (s) {
+      case 'paid': return 'Bezahlt';
+      case 'sent': return 'Gesendet';
+      case 'cancelled': return 'Storniert';
+      default: return 'Entwurf';
+    }
+  };
+
+  const statusBadge = (s: string) => {
+    switch (s) {
+      case 'paid': return 'badge-success';
+      case 'sent': return 'badge-info';
+      case 'cancelled': return 'badge-danger';
+      default: return 'badge-gray';
+    }
+  };
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return <ChevronDown className="w-3.5 h-3.5 text-neutral-300" />;
+    return sortDir === 'asc'
+      ? <ChevronUp className="w-3.5 h-3.5 text-primary-600" />
+      : <ChevronDown className="w-3.5 h-3.5 text-primary-600" />;
+  };
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Rechnungen</h1>
-          <p className="text-sm text-neutral-500 mt-0.5">{invoices.length} Dokumente</p>
+          <h1 className="text-2xl font-bold text-neutral-900">Buchhaltung</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">
+            {actualInvoices.length} Rechnungen &middot; {estimates.length} Angebote
+          </p>
         </div>
         <button onClick={handleExportCSV} className="btn btn-secondary">
           <FileDown className="w-4 h-4" />
@@ -332,68 +248,161 @@ export default function Invoices() {
         </button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-              <FileText className="w-5 h-5 text-primary-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-neutral-900">{invoices.length}</p>
-              <p className="text-xs text-neutral-500">Gesamt</p>
-            </div>
-          </div>
-        </div>
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
-              <Check className="w-5 h-5 text-success-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-neutral-900">CHF {totalRevenue.toFixed(0)}</p>
-              <p className="text-xs text-neutral-500">Bezahlt</p>
-            </div>
-          </div>
-        </div>
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-warning-100 rounded-lg flex items-center justify-center">
-              <Clock className="w-5 h-5 text-warning-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-neutral-900">CHF {pendingAmount.toFixed(0)}</p>
-              <p className="text-xs text-neutral-500">Offen</p>
-            </div>
-          </div>
-        </div>
-        <div className="card">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
-              <FileText className="w-5 h-5 text-neutral-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-neutral-900">CHF {totalInvoiced.toFixed(0)}</p>
-              <p className="text-xs text-neutral-500">Fakturiert</p>
-            </div>
-          </div>
-        </div>
+      {/* Type Tabs */}
+      <div className="flex gap-1 bg-neutral-100 p-1 rounded-xl w-fit">
+        {[
+          { value: 'all', label: 'Alle', count: invoices.length },
+          { value: 'invoice', label: 'Rechnungen', count: actualInvoices.length },
+          { value: 'estimate', label: 'Angebote', count: estimates.length },
+        ].map((tab) => (
+          <button
+            key={tab.value}
+            onClick={() => setFilterType(tab.value)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              filterType === tab.value
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-500 hover:text-neutral-700'
+            }`}
+          >
+            {tab.label}
+            <span className={`ml-1.5 text-xs ${
+              filterType === tab.value ? 'text-neutral-500' : 'text-neutral-400'
+            }`}>
+              {tab.count}
+            </span>
+          </button>
+        ))}
       </div>
+
+      {/* Adaptive Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {filterType === 'estimate' ? (
+          <>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">{estimates.length}</p>
+                  <p className="text-xs text-neutral-500">Angebote</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <Receipt className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">CHF {estimatesTotal.toFixed(0)}</p>
+                  <p className="text-xs text-neutral-500">Angebotssumme</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
+                  <Check className="w-5 h-5 text-success-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">{estimatesAccepted}</p>
+                  <p className="text-xs text-neutral-500">Akzeptiert</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="w-5 h-5 text-primary-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">{estimateConversionRate}%</p>
+                  <p className="text-xs text-neutral-500">Konversionsrate</p>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-primary-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">
+                    {filterType === 'all' ? invoices.length : actualInvoices.length}
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    {filterType === 'all' ? 'Dokumente' : 'Rechnungen'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
+                  <Check className="w-5 h-5 text-success-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">CHF {totalRevenue.toFixed(0)}</p>
+                  <p className="text-xs text-neutral-500">Bezahlt</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-warning-100 rounded-lg flex items-center justify-center">
+                  <Clock className="w-5 h-5 text-warning-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">CHF {pendingAmount.toFixed(0)}</p>
+                  <p className="text-xs text-neutral-500">Offen</p>
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-neutral-600" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-neutral-900">CHF {totalInvoiced.toFixed(0)}</p>
+                  <p className="text-xs text-neutral-500">Fakturiert</p>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Overdue Warning */}
+      {overdueInvoices.length > 0 && filterType !== 'estimate' && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
+          <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-5 h-5 text-red-600" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-red-800">
+              {overdueInvoices.length} überfällige {overdueInvoices.length === 1 ? 'Rechnung' : 'Rechnungen'}
+            </p>
+            <p className="text-xs text-red-600">
+              CHF {overdueAmount.toFixed(2)} offen seit über {OVERDUE_DAYS} Tagen
+            </p>
+          </div>
+          <button
+            onClick={() => { setFilterStatus('sent'); setFilterType('invoice'); }}
+            className="text-xs font-medium text-red-700 hover:text-red-800 bg-red-100 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            Anzeigen
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="card p-4">
         <div className="flex flex-wrap gap-3 items-end">
-          <div className="w-32">
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              className="input text-sm"
-            >
-              <option value="all">Alle Typen</option>
-              <option value="invoice">Rechnungen</option>
-              <option value="estimate">Angebote</option>
-            </select>
-          </div>
           <div className="w-32">
             <select
               value={filterStatus}
@@ -436,543 +445,149 @@ export default function Invoices() {
               </button>
             ))}
           </div>
-          <label className="flex items-center gap-2 cursor-pointer ml-auto">
-            <input
-              type="checkbox"
-              checked={groupByVehicle}
-              onChange={(e) => setGroupByVehicle(e.target.checked)}
-              className="w-4 h-4 text-primary-600 border-neutral-300 rounded"
-            />
-            <span className="text-sm text-neutral-600">Gruppieren</span>
-          </label>
         </div>
       </div>
 
-      {/* Invoices List */}
+      {/* Table */}
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
-          <div className="relative">
-            <div className="w-16 h-16 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin"></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <FileText className="w-6 h-6 text-primary-600 animate-pulse" />
-            </div>
-          </div>
+          <div className="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
         </div>
-      ) : filteredInvoices.length === 0 ? (
-        <div className="card-elevated text-center py-16">
-          <div className="w-20 h-20 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <FileText className="w-10 h-10 text-gray-400" />
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Keine Rechnungen gefunden</h3>
-          <p className="text-gray-600 mb-6">Erstellen Sie Ihre erste Rechnung oder Angebot</p>
-            <p className="text-sm text-gray-500">
-              Rechnungen und Angebote werden direkt auf der Fahrzeugdetailseite erstellt.
-            </p>
-        </div>
-      ) : groupByVehicle ? (
-        // Grouped by vehicle view
-        <div className="space-y-4">
-          {/* Expand/Collapse All Buttons */}
-          {Object.keys(invoicesByVehicle).length > 0 && (
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={expandAll}
-                className="text-sm px-3 py-1.5 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors font-medium"
-              >
-                Alle öffnen
-              </button>
-              <button
-                onClick={collapseAll}
-                className="text-sm px-3 py-1.5 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors font-medium"
-              >
-                Alle schließen
-              </button>
-            </div>
-          )}
-
-          {Object.entries(invoicesByVehicle)
-            .sort(([a], [b]) => {
-              if (a === 'no-vehicle') return 1;
-              if (b === 'no-vehicle') return -1;
-              return invoicesByVehicle[a].vehicleKey.localeCompare(invoicesByVehicle[b].vehicleKey);
-            })
-            .map(([vehicleId, group], groupIndex) => {
-              const isExpanded = expandedVehicles.has(vehicleId);
-              
-              return (
-                <div key={vehicleId} className="card-elevated animate-slide-up" style={{ animationDelay: `${groupIndex * 100}ms` }}>
-                  {/* Vehicle Header - Clickable */}
-                  <button
-                    onClick={() => toggleVehicleGroup(vehicleId)}
-                    className="w-full text-left border-b border-gray-200 pb-4 mb-0 transition-all duration-200 hover:bg-gray-50 -m-6 p-6 rounded-t-xl"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-1">
-                        {group.vehicle ? (
-                          <>
-                            <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
-                              <Car className="w-6 h-6 text-white" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-bold text-lg text-gray-900">
-                                {group.vehicle.brand && group.vehicle.model
-                                  ? `${group.vehicle.brand} ${group.vehicle.model}`
-                                  : group.vehicle.vin}
-                              </h3>
-                              <p className="text-sm text-gray-600">VIN: {group.vehicle.vin}</p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {group.invoices.length} {group.invoices.length === 1 ? 'Rechnung' : 'Rechnungen'}
-                              </p>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 bg-gradient-to-br from-gray-400 to-gray-500 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0">
-                              <FileText className="w-6 h-6 text-white" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-bold text-lg text-gray-900">Ohne Fahrzeug</h3>
-                              <p className="text-xs text-gray-500 mt-1">
-                                {group.invoices.length} {group.invoices.length === 1 ? 'Rechnung' : 'Rechnungen'}
-                              </p>
-                            </div>
-                          </>
-                        )}
-                        {/* Chevron Icon */}
-                        <div className="flex-shrink-0 ml-2">
-                          {isExpanded ? (
-                            <ChevronUp className="w-5 h-5 text-gray-400" />
-                          ) : (
-                            <ChevronDown className="w-5 h-5 text-gray-400" />
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right ml-4">
-                        <p className="text-sm text-gray-600 mb-1">Gesamt</p>
-                        <p className="text-3xl font-bold text-primary-600">
-                          CHF {group.total.toFixed(2)}
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* Invoices List - Collapsible */}
-                  {isExpanded && (
-                    <div className="pt-4 space-y-3 animate-fade-in">
-                      {group.invoices.map((invoice, index) => (
-                        <Link
-                          key={invoice.id}
-                          to={`/invoices/${invoice.id}`}
-                          className="block card-hover border border-gray-100"
-                          style={{ animationDelay: `${index * 30}ms` }}
-                        >
-                          <div className="flex items-center justify-between p-4">
-                            <div className="flex items-center gap-4 flex-1">
-                              <div className={`w-12 h-12 bg-gradient-to-br ${
-                                invoice.type === 'invoice' 
-                                  ? 'from-primary-500 to-primary-600' 
-                                  : 'from-blue-500 to-blue-600'
-                              } rounded-xl flex items-center justify-center shadow-lg`}>
-                                <FileText className="w-6 h-6 text-white" />
-                              </div>
-                              <div className="flex-1">
-                                <h4 className="font-bold text-gray-900 mb-1">
-                                  {invoice.invoiceNumber}
-                                </h4>
-                                <div className="flex flex-wrap gap-3 items-center">
-                                  <span className={`badge ${
-                                    invoice.status === 'paid' ? 'badge-success' :
-                                    invoice.status === 'sent' ? 'badge-info' :
-                                    invoice.status === 'cancelled' ? 'badge-danger' :
-                                    'badge-gray'
-                                  }`}>
-                                    {invoice.status === 'paid' ? 'Bezahlt' :
-                                     invoice.status === 'sent' ? 'Gesendet' :
-                                     invoice.status === 'cancelled' ? 'Storniert' :
-                                     'Entwurf'}
-                                  </span>
-                                  <span className="text-sm text-gray-500 capitalize">
-                                    {invoice.type === 'invoice' ? 'Rechnung' : 'Angebot'}
-                                  </span>
-                                  <span className="text-sm text-gray-500">
-                                    {format(new Date(invoice.createdAt), 'dd.MM.yyyy')}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-xl font-bold text-gray-900">
-                                CHF {invoice.total.toFixed(2)}
-                              </p>
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+      ) : sortedInvoices.length === 0 ? (
+        <div className="card text-center py-16">
+          <FileText className="w-12 h-12 text-neutral-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-neutral-700 mb-1">Keine Einträge gefunden</h3>
+          <p className="text-sm text-neutral-500">Rechnungen und Angebote werden auf der Fahrzeugdetailseite erstellt.</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {filteredInvoices.map((invoice, index) => (
-            <div
-              key={invoice.id}
-              className="card-hover animate-slide-up"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  <Link
-                    to={`/invoices/${invoice.id}`}
-                    className="flex items-start gap-4 flex-1 group"
-                  >
-                    {/* Icon */}
-                    <div className="relative flex-shrink-0">
-                      <div className="absolute inset-0 bg-primary-500/20 blur-lg rounded-xl" />
-                      <div className={`w-16 h-16 bg-gradient-to-br ${
-                        invoice.type === 'invoice' 
-                          ? 'from-primary-500 to-primary-600' 
-                          : 'from-blue-500 to-blue-600'
-                      } rounded-xl flex items-center justify-center shadow-lg relative z-10 group-hover:scale-110 transition-transform duration-300`}>
-                        <FileText className="w-8 h-8 text-white" />
-                      </div>
-                    </div>
-                    
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h3 className="font-bold text-gray-900 text-lg mb-1 group-hover:text-primary-600 transition-colors">
-                            {invoice.invoiceNumber}
-                          </h3>
-                          <p className="text-sm text-gray-600 mb-2">
-                            <span className="capitalize font-medium">{invoice.type === 'invoice' ? 'Rechnung' : 'Angebot'}</span>
-                            {' • '}
-                            <span className="font-semibold">{invoice.customerName}</span>
-                          </p>
-                        </div>
-                        <span className={`badge ${
-                          invoice.status === 'paid' ? 'badge-success' :
-                          invoice.status === 'sent' ? 'badge-info' :
-                          invoice.status === 'cancelled' ? 'badge-danger' :
-                          'badge-gray'
-                        }`}>
-                          {invoice.status === 'paid' ? 'Bezahlt' :
-                           invoice.status === 'sent' ? 'Gesendet' :
-                           invoice.status === 'cancelled' ? 'Storniert' :
-                           'Entwurf'}
-                        </span>
-                      </div>
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div className="bg-gray-50 rounded-xl p-3">
-                        <span className="text-xs text-gray-500 block mb-1">Fahrzeug</span>
-                        <p className="font-semibold text-sm text-gray-900">
-                          {invoice.vehicle.brand && invoice.vehicle.model
-                            ? `${invoice.vehicle.brand} ${invoice.vehicle.model}`
-                            : invoice.vehicle.vin}
-                        </p>
-                      </div>
-                      <div className="bg-primary-50 rounded-xl p-3">
-                        <span className="text-xs text-primary-600 block mb-1">Positionen</span>
-                        <p className="font-bold text-sm text-primary-900">{invoice.items.length}</p>
-                      </div>
-                      <div className="bg-green-50 rounded-xl p-3">
-                        <span className="text-xs text-green-600 block mb-1">Gesamt</span>
-                        <p className="font-bold text-lg text-green-900">CHF {invoice.total.toFixed(2)}</p>
-                      </div>
-                      <div className="bg-gray-50 rounded-xl p-3">
-                        <span className="text-xs text-gray-500 block mb-1">Datum</span>
-                        <p className="font-semibold text-sm text-gray-900">
-                          {format(new Date(invoice.createdAt), 'dd.MM.yyyy')}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  </Link>
-                
-                {/* Actions */}
-                <div className="flex items-center gap-2 lg:flex-col lg:items-end">
-                  <div className="flex gap-2">
-                    <Link
-                      to={`/invoices/${invoice.id}`}
-                      className="p-2.5 hover:bg-blue-50 rounded-xl transition-all duration-200 hover:scale-110"
-                      title="Details anzeigen"
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-neutral-200 bg-neutral-50/50">
+                  {([
+                    ['number', 'Nr.'],
+                    ['date', 'Datum'],
+                    ['customer', 'Kunde'],
+                    ['vehicle', 'Fahrzeug'],
+                    ['status', 'Status'],
+                    ['total', 'Betrag'],
+                  ] as [SortField, string][]).map(([field, label]) => (
+                    <th
+                      key={field}
+                      onClick={() => toggleSort(field)}
+                      className="text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider px-4 py-3 cursor-pointer hover:text-neutral-700 select-none"
                     >
-                      <FileText className="w-4 h-4 text-blue-600" />
-                    </Link>
-                    {invoice.status !== 'sent' && invoice.status !== 'paid' && (
-                      <button
-                        onClick={() => handleStatusUpdate(invoice.id, 'sent')}
-                        className="p-2.5 hover:bg-blue-50 rounded-xl transition-all duration-200 hover:scale-110"
-                        title="Als gesendet markieren"
-                      >
-                        <Send className="w-4 h-4 text-blue-600" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleEdit(invoice)}
-                      className="p-2.5 hover:bg-primary-50 rounded-xl transition-all duration-200 hover:scale-110"
-                      title="Bearbeiten"
-                    >
-                      <Edit className="w-4 h-4 text-primary-600" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(invoice.id)}
-                      className="p-2.5 hover:bg-red-50 rounded-xl transition-all duration-200 hover:scale-110"
-                      title="Löschen"
-                    >
-                      <Trash2 className="w-4 h-4 text-red-600" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Edit Modal - Only for status updates */}
-      {editingInvoice && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
-              <h2 className="text-xl font-bold">
-                {editingInvoice ? 'Rechnung bearbeiten' : 'Neue Rechnung/Angebot'}
-              </h2>
-              <button
-                onClick={() => {
-                  setEditingInvoice(null);
-                  resetForm();
-                }}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Typ *
-                  </label>
-                  <select
-                    value={formData.type}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                    className="input"
-                    disabled={!!editingInvoice}
-                  >
-                    <option value="estimate">Angebot</option>
-                    <option value="invoice">Rechnung</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Fahrzeug *
-                  </label>
-                  <select
-                    value={formData.vehicleId}
-                    onChange={(e) => setFormData({ ...formData, vehicleId: e.target.value })}
-                    required
-                    className="input"
-                    disabled={!!editingInvoice}
-                  >
-                    <option value="">Fahrzeug auswählen</option>
-                    {vehicles.map((vehicle) => (
-                      <option key={vehicle.id} value={vehicle.id}>
-                        {vehicle.brand && vehicle.model
-                          ? `${vehicle.brand} ${vehicle.model} - ${vehicle.vin}`
-                          : vehicle.vin}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Kundenname *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.customerName}
-                    onChange={(e) =>
-                      setFormData({ ...formData, customerName: e.target.value })
-                    }
-                    required
-                    className="input"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Kunden-E-Mail
-                  </label>
-                  <input
-                    type="email"
-                    value={formData.customerEmail}
-                    onChange={(e) =>
-                      setFormData({ ...formData, customerEmail: e.target.value })
-                    }
-                    className="input"
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Kundenadresse
-                  </label>
-                  <textarea
-                    value={formData.customerAddress}
-                    onChange={(e) =>
-                      setFormData({ ...formData, customerAddress: e.target.value })
-                    }
-                    rows={2}
-                    className="input"
-                  />
-                </div>
-              </div>
-
-              {/* Items */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <label className="block text-sm font-medium text-gray-700">Items *</label>
-                  <button
-                    type="button"
-                    onClick={addItem}
-                    className="text-sm text-primary-600 hover:text-primary-700 font-medium"
-                  >
-                    + Position hinzufügen
-                  </button>
-                </div>
-                <div className="space-y-3">
-                  {formData.items.map((item, index) => (
-                    <div key={index} className="grid grid-cols-12 gap-2 items-end">
-                      <div className="col-span-12 md:col-span-5">
-                        <input
-                          type="text"
-                          value={item.description}
-                          onChange={(e) => updateItem(index, 'description', e.target.value)}
-                          placeholder="Beschreibung"
-                          required
-                          className="input"
-                        />
-                      </div>
-                      <div className="col-span-4 md:col-span-2">
-                        <input
-                          type="number"
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, 'quantity', e.target.value)}
-                          min="0"
-                          step="0.01"
-                          placeholder="Menge"
-                          required
-                          className="input"
-                        />
-                      </div>
-                      <div className="col-span-4 md:col-span-2">
-                        <input
-                          type="number"
-                          value={item.unitPrice}
-                          onChange={(e) => updateItem(index, 'unitPrice', e.target.value)}
-                          min="0"
-                          step="0.01"
-                          placeholder="Preis"
-                          required
-                          className="input"
-                        />
-                      </div>
-                      <div className="col-span-3 md:col-span-2">
-                        <input
-                          type="text"
-                          value={`CHF ${parseFloat(item.total).toFixed(2)}`}
-                          disabled
-                          className="input bg-gray-50"
-                        />
-                      </div>
-                      <div className="col-span-1">
-                        {formData.items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeItem(index)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                      <span className="inline-flex items-center gap-1">
+                        {label}
+                        <SortIcon field={field} />
+                      </span>
+                    </th>
                   ))}
-                </div>
-              </div>
+                  <th className="text-right text-xs font-semibold text-neutral-500 uppercase tracking-wider px-4 py-3">
+                    Aktionen
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {sortedInvoices.map((invoice) => {
+                  const overdue = isOverdue(invoice);
+                  return (
+                    <tr
+                      key={invoice.id}
+                      className={`group hover:bg-neutral-50 transition-colors ${overdue ? 'bg-red-50/40' : ''}`}
+                    >
+                      {/* Nr. */}
+                      <td className="px-4 py-3">
+                        <Link to={`/invoices/${invoice.id}`} className="hover:text-primary-600 transition-colors">
+                          <span className="font-semibold text-sm text-neutral-900">{invoice.invoiceNumber}</span>
+                          <span className="block text-xs text-neutral-400">
+                            {invoice.type === 'invoice' ? 'Rechnung' : 'Angebot'}
+                          </span>
+                        </Link>
+                      </td>
+                      {/* Datum */}
+                      <td className="px-4 py-3 text-sm text-neutral-600">
+                        {format(new Date(invoice.createdAt), 'dd.MM.yyyy')}
+                      </td>
+                      {/* Kunde */}
+                      <td className="px-4 py-3 text-sm text-neutral-900 font-medium">
+                        {invoice.customerName}
+                      </td>
+                      {/* Fahrzeug */}
+                      <td className="px-4 py-3 text-sm text-neutral-600">
+                        {invoice.vehicle.brand && invoice.vehicle.model
+                          ? `${invoice.vehicle.brand} ${invoice.vehicle.model}`
+                          : invoice.vehicle.vin}
+                      </td>
+                      {/* Status */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`badge ${statusBadge(invoice.status)}`}>
+                            {statusLabel(invoice.status)}
+                          </span>
+                          {overdue && (
+                            <span className="badge badge-danger text-[10px] flex items-center gap-0.5">
+                              <AlertTriangle className="w-3 h-3" />
+                              Überfällig
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      {/* Betrag */}
+                      <td className="px-4 py-3 text-sm font-bold text-neutral-900 tabular-nums">
+                        CHF {invoice.total.toFixed(2)}
+                      </td>
+                      {/* Aktionen */}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {invoice.status === 'draft' && (
+                            <button
+                              onClick={() => handleStatusUpdate(invoice.id, 'sent')}
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Als gesendet markieren"
+                            >
+                              <Send className="w-4 h-4" />
+                            </button>
+                          )}
+                          {(invoice.status === 'draft' || invoice.status === 'sent') && (
+                            <button
+                              onClick={() => handleStatusUpdate(invoice.id, 'paid')}
+                              className={`p-1.5 rounded-lg transition-colors ${
+                                overdue ? 'text-red-600 hover:bg-red-50' : 'text-green-600 hover:bg-green-50'
+                              }`}
+                              title="Als bezahlt markieren"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDelete(invoice.id)}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Löschen"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-              {/* Totals */}
-              <div className="border-t pt-4">
-                <div className="flex justify-end">
-                  <div className="w-full md:w-64 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">Zwischensumme:</span>
-                      <span className="font-medium">CHF {subtotal.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">MwSt. ({formData.taxRate}%):</span>
-                      <span className="font-medium">CHF {taxAmount.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-lg font-bold border-t pt-2">
-                      <span>Gesamt:</span>
-                      <span>CHF {total.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Mehrwertsteuer (%)
-                </label>
-                <input
-                  type="number"
-                  value={formData.taxRate}
-                  onChange={(e) => setFormData({ ...formData, taxRate: e.target.value })}
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  className="input w-32"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
-                <textarea
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  rows={3}
-                  className="input"
-                />
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button type="submit" className="btn btn-primary flex-1">
-                  {editingInvoice ? 'Rechnung aktualisieren' : 'Rechnung erstellen'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingInvoice(null);
-                    resetForm();
-                  }}
-                  className="btn btn-secondary"
-                >
-                  Abbrechen
-                </button>
-              </div>
-            </form>
+          {/* Table footer with totals */}
+          <div className="border-t border-neutral-200 bg-neutral-50/50 px-4 py-3 flex items-center justify-between">
+            <span className="text-sm text-neutral-500">
+              {sortedInvoices.length} {sortedInvoices.length === 1 ? 'Eintrag' : 'Einträge'}
+            </span>
+            <span className="text-sm font-bold text-neutral-900">
+              Total: CHF {sortedInvoices.reduce((s, i) => s + i.total, 0).toFixed(2)}
+            </span>
           </div>
         </div>
       )}
     </div>
   );
 }
-

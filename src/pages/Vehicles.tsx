@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
-import { Plus, Search, Car, Edit, Trash2, X, Check, ChevronDown, ChevronUp, FileText, Send, Mail, Download, Play, Pause, Loader2 } from 'lucide-react';
-import { format } from 'date-fns';
-import jsPDF from 'jspdf';
-import DerendingerProductPicker from '../components/DerendingerProductPicker';
+import { Plus, Search, Car, Edit, Trash2, X, Check, ChevronDown, ChevronUp, FileText, Play, Pause, Loader2, Download, AlertTriangle, Package, CheckCircle2, Clock, ShoppingCart } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import CreateInvoiceModal from '../components/CreateInvoiceModal';
+import NachbestellungModal from '../components/NachbestellungModal';
 
 interface Vehicle {
   id: string;
@@ -24,6 +25,9 @@ interface Vehicle {
   licensePlate?: string;
   workDescription?: string;
   serviceType?: string;
+  serviceTemplateId?: string;
+  serviceTemplate?: any;
+  selectedParts?: any;
   color?: string;
   mileage?: number;
   customerName?: string;
@@ -54,8 +58,20 @@ interface SelectedProduct {
   isAutoSelected?: boolean;
 }
 
+// Extract numeric price from Derendinger price object or plain number
+function getPartPrice(price: any): number {
+  if (price == null) return 0;
+  if (typeof price === 'number') return price;
+  if (typeof price === 'object') {
+    return price.net1Price || price.grossPrice || price.oepPrice || 0;
+  }
+  return Number(price) || 0;
+}
+
 export default function Vehicles() {
   const navigate = useNavigate();
+  const { user, currentWorker } = useAuth();
+  const isAdmin = (currentWorker?.role || user?.role) === 'admin';
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -66,27 +82,40 @@ export default function Vehicles() {
   const [vehicleImage, setVehicleImage] = useState<string | null>(null);
   const [showFullVinData, setShowFullVinData] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [modalStep, setModalStep] = useState<1 | 2>(1); // Step 1: Review/Edit, Step 2: PDF Preview
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Vehicle | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [invoiceType, setInvoiceType] = useState<'estimate' | 'invoice'>('estimate');
-  const [invoiceFormData, setInvoiceFormData] = useState({
-    customerName: '',
-    customerEmail: '',
-    customerPhone: '',
-    customerAddress: '',
-    taxRate: '7.7',
-    notes: '',
-    items: [] as Array<{ description: string; quantity: number; unitPrice: number; total: number }>,
-  });
-  const [createdInvoice, setCreatedInvoice] = useState<any>(null);
-  const [pdfBlob, setPdfBlob] = useState<string | null>(null); // PDF data URL for preview
-  const [isCreating, setIsCreating] = useState(false);
   
   // Activation modal state
   const [showActivationModal, setShowActivationModal] = useState(false);
   const [activatingVehicle, setActivatingVehicle] = useState<Vehicle | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
   const [isActivating, setIsActivating] = useState(false);
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [dropdownInvoices, setDropdownInvoices] = useState<any[]>([]);
+  const [dropdownLoading, setDropdownLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'on_hold' | 'active' | 'completed'>('all');
+
+  // Nachbestellung modal state
+  const [showNachbestellungModal, setShowNachbestellungModal] = useState(false);
+  const [nachbestellungVehicle, setNachbestellungVehicle] = useState<Vehicle | null>(null);
+
+  // Completion modal state
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [completingVehicle, setCompletingVehicle] = useState<Vehicle | null>(null);
+  const [completionData, setCompletionData] = useState<{
+    invoice: any | null;
+    invoicePaid: boolean;
+    revenue: number;
+    expensesTotal: number;
+    laborCost: number;
+    laborHours: number;
+    profit: number;
+    workers: Array<{ name: string; hours: number; rate: number; cost: number }>;
+  } | null>(null);
+  const [completionLoading, setCompletionLoading] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   
   const [formData, setFormData] = useState({
     vin: '',
@@ -110,6 +139,14 @@ export default function Vehicles() {
   useEffect(() => {
     fetchVehicles();
   }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!openDropdownId) return;
+    const close = () => setOpenDropdownId(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [openDropdownId]);
 
   const fetchVehicles = async () => {
     try {
@@ -232,12 +269,19 @@ export default function Vehicles() {
     setShowModal(true);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Sind Sie sicher, dass Sie dieses Fahrzeug löschen möchten?')) return;
+  const openDeleteModal = (vehicle: Vehicle) => {
+    setDeleteTarget(vehicle);
+    setDeleteConfirmText('');
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget || deleteConfirmText !== 'DELETE') return;
 
     try {
-      await api.delete(`/vehicles/${id}`);
-      toast.success('Fahrzeug erfolgreich gelöscht');
+      await api.delete(`/vehicles/${deleteTarget.id}`);
+      toast.success('Fahrzeug und alle zugehörigen Daten gelöscht');
+      setDeleteTarget(null);
+      setDeleteConfirmText('');
       fetchVehicles();
     } catch (error) {
       toast.error('Fahrzeug konnte nicht gelöscht werden');
@@ -270,572 +314,138 @@ export default function Vehicles() {
     setShowFullVinData(false);
   };
 
-  const filteredVehicles = vehicles.filter(
-    (v) =>
-      v.vin.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.brand?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.model?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.licensePlate?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredVehicles = vehicles.filter((v) => {
+    // Status filter
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'on_hold' && v.status !== 'on_hold') return false;
+      if (statusFilter === 'active' && v.status !== 'active') return false;
+      if (statusFilter === 'completed' && v.status !== 'completed') return false;
+    }
+    // Search filter
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      return (
+        v.vin.toLowerCase().includes(term) ||
+        v.brand?.toLowerCase().includes(term) ||
+        v.model?.toLowerCase().includes(term) ||
+        v.licensePlate?.toLowerCase().includes(term) ||
+        v.customerName?.toLowerCase().includes(term)
+      );
+    }
+    return true;
+  });
 
-  const activeVehicles = vehicles.filter(v => v.isActive).length;
   const totalVehicles = vehicles.length;
+  const draftCount = vehicles.filter(v => v.status === 'on_hold').length;
+  const activeCount = vehicles.filter(v => v.status === 'active').length;
+  const completedCount = vehicles.filter(v => v.status === 'completed').length;
 
-  const handleQuickInvoice = async (vehicle: Vehicle, type: 'estimate' | 'invoice') => {
+  const handleOpenCompletion = async (vehicle: Vehicle) => {
+    setCompletingVehicle(vehicle);
+    setShowCompletionModal(true);
+    setCompletionLoading(true);
+    setCompletionData(null);
+
+    try {
+      const [invoicesRes, expensesRes, timeLogsRes] = await Promise.all([
+        api.get('/invoices', { params: { vehicleId: vehicle.id } }),
+        api.get('/expenses/total', { params: { vehicleId: vehicle.id } }),
+        api.get('/time-logs', { params: { vehicleId: vehicle.id } }),
+      ]);
+
+      // Latest invoice for this vehicle
+      const invoices = invoicesRes.data || [];
+      const latestInvoice = invoices.find((i: any) => i.type === 'invoice') || null;
+      const revenue = latestInvoice?.total || 0;
+      const invoicePaid = latestInvoice?.status === 'paid';
+
+      // Expenses total
+      const expensesTotal = expensesRes.data?.totalAmount || 0;
+
+      // Worker costs from time logs
+      const timeLogs = timeLogsRes.data || [];
+      const workerMap = new Map<string, { name: string; hours: number; rate: number }>();
+      for (const log of timeLogs) {
+        const userId = log.user?.id || log.userId;
+        const name = log.user?.name || 'Unbekannt';
+        const rate = log.user?.hourlyRate || 35;
+        const existing = workerMap.get(userId);
+        if (existing) {
+          existing.hours += log.hours || 0;
+        } else {
+          workerMap.set(userId, { name, hours: log.hours || 0, rate });
+        }
+      }
+      const workers = Array.from(workerMap.values()).map((w) => ({
+        ...w,
+        cost: Math.round(w.hours * w.rate * 100) / 100,
+      }));
+      const laborCost = workers.reduce((sum, w) => sum + w.cost, 0);
+      const laborHours = workers.reduce((sum, w) => sum + w.hours, 0);
+
+      const profit = revenue - expensesTotal - laborCost;
+
+      setCompletionData({
+        invoice: latestInvoice,
+        invoicePaid,
+        revenue,
+        expensesTotal,
+        laborCost,
+        laborHours,
+        profit,
+        workers,
+      });
+    } catch {
+      toast.error('Daten konnten nicht geladen werden');
+      setShowCompletionModal(false);
+    } finally {
+      setCompletionLoading(false);
+    }
+  };
+
+  const handleConfirmCompletion = async () => {
+    if (!completingVehicle) return;
+    setIsCompleting(true);
+    try {
+      await api.patch(`/vehicles/${completingVehicle.id}`, {
+        status: 'completed',
+        isActive: false,
+      });
+      toast.success('Fahrzeug abgeschlossen');
+      setShowCompletionModal(false);
+      setCompletingVehicle(null);
+      setCompletionData(null);
+      fetchVehicles();
+    } catch {
+      toast.error('Status konnte nicht aktualisiert werden');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const handleQuickInvoice = (vehicle: Vehicle, type: 'estimate' | 'invoice') => {
     setSelectedVehicle(vehicle);
     setInvoiceType(type);
-    setModalStep(1);
-    setCreatedInvoice(null);
-    setPdfBlob(null);
-    setIsCreating(false);
-    
-    // Use customer info from vehicle
-    setInvoiceFormData({
-      customerName: vehicle.customerName || '',
-      customerEmail: vehicle.customerEmail || '',
-      customerPhone: vehicle.customerPhone || '',
-      customerAddress: '',
-      taxRate: '7.7',
-      notes: '',
-      items: [],
-    });
-    
-    // Load items based on type
-    await loadInvoiceItems(vehicle, type);
-    
+    setOpenDropdownId(null);
     setShowInvoiceModal(true);
   };
 
-  const loadInvoiceItems = async (vehicle: Vehicle, type: 'estimate' | 'invoice') => {
-    if (type === 'estimate') {
-      // For estimates: Get service package items (don't create yet, just preview)
-      if (vehicle.serviceType) {
-        try {
-          // Get expenses for this vehicle
-          const expensesResponse = await api.get('/expenses', {
-            params: { vehicleId: vehicle.id },
-          });
-          const expenses = expensesResponse.data || [];
-
-          // Service package estimates (hardcoded for now, same as backend)
-          const servicePackages: Record<string, any> = {
-            small_service: { estimatedHours: 1.5, name: 'Kleine Wartung' },
-            big_service: { estimatedHours: 4.0, name: 'Grosse Wartung' },
-            tire_change: { estimatedHours: 1.0, name: 'Reifenwechsel' },
-            brake_service: { estimatedHours: 2.5, name: 'Bremsenservice' },
-            repair: { estimatedHours: 3.0, name: 'Reparatur' },
-            inspection: { estimatedHours: 1.0, name: 'Inspektion' },
-          };
-
-          const servicePackage = servicePackages[vehicle.serviceType];
-          const hourlyRate = 120;
-          const estimatedHours = servicePackage?.estimatedHours || 0;
-
-          const items: any[] = [];
-
-          // Add expenses as items
-          expenses.forEach((expense: any) => {
-            items.push({
-              description: expense.description,
-              quantity: 1,
-              unitPrice: expense.amount,
-              total: expense.amount,
-            });
-          });
-
-          // Add estimated labor hours
-          if (estimatedHours > 0) {
-            items.push({
-              description: `Arbeitsstunden (geschätzt: ${estimatedHours.toFixed(2)}h)`,
-              quantity: estimatedHours,
-              unitPrice: hourlyRate,
-              total: estimatedHours * hourlyRate,
-            });
-          }
-
-          setInvoiceFormData(prev => ({
-            ...prev,
-            items,
-            taxRate: '7.7',
-          }));
-        } catch (error: any) {
-          toast.error('Service-Paket konnte nicht geladen werden');
-        }
-      }
-    } else {
-      // For invoices: Get expenses and time logs
-      try {
-        const timeLogsResponse = await api.get('/time-logs/total/hours', {
-          params: { vehicleId: vehicle.id },
-        });
-        const totalHours = timeLogsResponse.data?.totalHours || 0;
-
-        const expensesResponse = await api.get('/expenses', {
-          params: { vehicleId: vehicle.id },
-        });
-        const expenses = expensesResponse.data || [];
-
-        const items: any[] = [];
-
-        expenses.forEach((expense: any) => {
-          items.push({
-            description: expense.description,
-            quantity: 1,
-            unitPrice: expense.amount,
-            total: expense.amount,
-          });
-        });
-
-        if (totalHours > 0) {
-          const hourlyRate = 120;
-          items.push({
-            description: `Arbeitsstunden (${totalHours.toFixed(2)}h)`,
-            quantity: totalHours,
-            unitPrice: hourlyRate,
-            total: totalHours * hourlyRate,
-          });
-        }
-
-        setInvoiceFormData(prev => ({ ...prev, items }));
-      } catch (error: any) {
-        toast.error('Daten konnten nicht geladen werden');
-      }
-    }
-  };
-
-  const updateItem = (index: number, field: 'description' | 'quantity' | 'unitPrice', value: string | number) => {
-    const newItems = [...invoiceFormData.items];
-    newItems[index] = {
-      ...newItems[index],
-      [field]: field === 'description' ? value : parseFloat(value.toString()),
-      total: field === 'quantity' || field === 'unitPrice'
-        ? newItems[index].quantity * newItems[index].unitPrice
-        : newItems[index].total,
-    };
-    // Recalculate total
-    newItems[index].total = newItems[index].quantity * newItems[index].unitPrice;
-    setInvoiceFormData({ ...invoiceFormData, items: newItems });
-  };
-
-  const addItem = () => {
-    setInvoiceFormData({
-      ...invoiceFormData,
-      items: [...invoiceFormData.items, { description: '', quantity: 1, unitPrice: 0, total: 0 }],
-    });
-  };
-
-  const removeItem = (index: number) => {
-    setInvoiceFormData({
-      ...invoiceFormData,
-      items: invoiceFormData.items.filter((_, i) => i !== index),
-    });
-  };
-
-  const createInvoiceOrQuote = async () => {
-    if (!selectedVehicle) return;
-    
-    // Validate
-    if (!invoiceFormData.customerName) {
-      toast.error('Bitte geben Sie den Kundennamen ein');
+  const handleOpenDropdown = async (vehicleId: string) => {
+    if (openDropdownId === vehicleId) {
+      setOpenDropdownId(null);
       return;
     }
-
-    if (invoiceFormData.items.length === 0) {
-      toast.error('Bitte fügen Sie mindestens eine Position hinzu');
-      return;
-    }
-
-    setIsCreating(true);
+    setOpenDropdownId(vehicleId);
+    setDropdownLoading(true);
+    setDropdownInvoices([]);
     try {
-      // Create invoice/quote
-      const response = await api.post('/invoices', {
-        type: invoiceType,
-        vehicleId: selectedVehicle.id,
-        customerName: invoiceFormData.customerName,
-        customerEmail: invoiceFormData.customerEmail || undefined,
-        customerAddress: invoiceFormData.customerAddress || undefined,
-        items: invoiceFormData.items,
-        taxRate: parseFloat(invoiceFormData.taxRate) || 7.7,
-        notes: invoiceFormData.notes || undefined,
-      });
-
-      const invoice = response.data;
-      setCreatedInvoice(invoice);
-
-      // Generate professional PDF with logo
-      const pdfBlob = await generateProfessionalPDF(invoice);
-      setPdfBlob(pdfBlob);
-
-      // Upload PDF to Supabase Storage
-      const pdfFile = dataURLtoFile(pdfBlob, `${invoice.invoiceNumber}.pdf`);
-      const formData = new FormData();
-      formData.append('file', pdfFile);
-
-      try {
-        const uploadResponse = await api.post(`/invoices/${invoice.id}/upload-pdf`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
-        
-        // Update invoice with PDF URL
-        setCreatedInvoice({ ...invoice, pdfUrl: uploadResponse.data.pdfUrl });
-        toast.success(`${invoiceType === 'invoice' ? 'Rechnung' : 'Angebot'} erfolgreich erstellt und PDF gespeichert`);
-      } catch (uploadError) {
-        toast.error('PDF konnte nicht hochgeladen werden, aber erstellt wurde gespeichert');
-      }
-
-      // Move to step 2 (PDF preview)
-      setModalStep(2);
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Fehler beim Erstellen');
+      const res = await api.get(`/invoices?vehicleId=${vehicleId}`);
+      setDropdownInvoices(res.data);
+    } catch {
+      setDropdownInvoices([]);
     } finally {
-      setIsCreating(false);
+      setDropdownLoading(false);
     }
-  };
-
-  const dataURLtoFile = (dataurl: string, filename: string): File => {
-    const arr = dataurl.split(',');
-    const mime = arr[0].match(/:(.*?);/)?.[1] || 'application/pdf';
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new File([u8arr], filename, { type: mime });
-  };
-
-  const generateProfessionalPDF = async (invoice: any): Promise<string> => {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
-    const blueColor: [number, number, number] = [2, 132, 199]; // primary-600: #0284c7
-    const lightBlue: [number, number, number] = [241, 245, 249]; // slate-100 for backgrounds
-    let yPos = margin;
-
-    // Blue vertical bar on left (like the examples)
-    doc.setFillColor(...blueColor);
-    doc.rect(margin, yPos, 4, pageHeight - margin * 2, 'F');
-
-    // Company name header (no logo, just text)
-    doc.setFontSize(28);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...blueColor);
-    doc.text('OCEANCAR', margin + 8, yPos + 12);
-    yPos += 25;
-
-    // Company info section (right side, like the examples)
-    const companyInfoX = pageWidth - margin;
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    
-    // Company name bold
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.text('Ocean Garage', companyInfoX, yPos - 18, { align: 'right' });
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    const companyInfo = [
-      'Fahrzeugreparatur & Service',
-      'Schweiz',
-    ];
-    companyInfo.forEach((line, idx) => {
-      doc.text(line, companyInfoX, yPos - 10 + (idx * 5), { align: 'right' });
-    });
-
-    yPos += 15;
-
-    // Document type (large, blue, top right)
-    doc.setFontSize(32);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...blueColor);
-    const docType = invoice.type === 'invoice' ? 'RECHNUNG' : 'ANGEBOT';
-    doc.text(docType, companyInfoX, yPos, { align: 'right' });
-    yPos += 10;
-
-    // Offer/Invoice details box (top right, like examples)
-    const detailBoxY = yPos;
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(60, 60, 60);
-    
-    const docNumber = invoice.invoiceNumber.replace('INV-', 'EST-');
-    const validUntil = format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'dd.MM.yyyy');
-    
-    doc.text(`Offerten-Nr.: ${docNumber}`, companyInfoX, detailBoxY, { align: 'right' });
-    doc.text(`Datum: ${format(new Date(invoice.createdAt), 'dd.MM.yyyy')}`, companyInfoX, detailBoxY + 5, { align: 'right' });
-    if (invoice.type === 'estimate') {
-      doc.text(`Gültig bis: ${validUntil}`, companyInfoX, detailBoxY + 10, { align: 'right' });
-    }
-    
-    yPos = detailBoxY + 18;
-
-    // Customer info box (left, with background like examples)
-    const customerBoxY = yPos;
-    doc.setFillColor(...lightBlue);
-    const customerBoxHeight = invoice.customerAddress ? 35 : invoice.customerEmail ? 28 : 22;
-    doc.rect(margin + 8, customerBoxY, 75, customerBoxHeight, 'F');
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...blueColor);
-    doc.text(invoice.customerName, margin + 10, customerBoxY + 6);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(0, 0, 0);
-    let customerLineY = customerBoxY + 11;
-    
-    if (invoice.customerEmail) {
-      doc.text(invoice.customerEmail, margin + 10, customerLineY);
-      customerLineY += 5;
-    }
-    if (invoice.customerAddress) {
-      const addressLines = invoice.customerAddress.split('\n');
-      addressLines.forEach((line: string) => {
-        doc.text(line, margin + 10, customerLineY);
-        customerLineY += 5;
-      });
-    }
-
-    // Vehicle info box (right, with background)
-    const vehicleBoxY = customerBoxY;
-    const vehicleBoxHeight = selectedVehicle?.brand && selectedVehicle?.model ? 25 : 20;
-    doc.setFillColor(250, 250, 250);
-    doc.rect(pageWidth - margin - 75, vehicleBoxY, 75, vehicleBoxHeight, 'F');
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(0, 0, 0);
-    doc.text('Fahrzeug:', pageWidth - margin - 73, vehicleBoxY + 6);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    if (selectedVehicle?.brand && selectedVehicle?.model) {
-      doc.text(`${selectedVehicle.brand} ${selectedVehicle.model}`, pageWidth - margin - 73, vehicleBoxY + 11);
-      doc.text(`VIN: ${selectedVehicle.vin}`, pageWidth - margin - 73, vehicleBoxY + 16);
-    } else {
-      doc.text(`VIN: ${selectedVehicle?.vin || invoice.vehicle.vin}`, pageWidth - margin - 73, vehicleBoxY + 11);
-    }
-
-    yPos = Math.max(customerBoxY + customerBoxHeight, vehicleBoxY + vehicleBoxHeight) + 15;
-
-    // Introductory text (like examples)
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    doc.text(
-      invoice.type === 'estimate' 
-        ? 'Vielen Dank für Ihre Anfrage! Wir freuen uns, Ihnen folgende Offerte zu unterbreiten:'
-        : 'Im Folgenden finden Sie die Details zu Ihrer Rechnung:',
-      margin + 8,
-      yPos
-    );
-    yPos += 10;
-
-    // Items table header - professional style
-    doc.setFillColor(...blueColor);
-    doc.rect(margin + 8, yPos - 4, pageWidth - 2 * margin - 8, 7, 'F');
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(255, 255, 255);
-    
-    const tableStart = margin + 10;
-    const descWidth = 75; // Description column width (more space now)
-    const qtyWidth = 100; // Quantity column position
-    const unitWidth = 120; // Unit column position
-    const priceWidth = 145; // Price column position (right-aligned)
-    const totalWidth = pageWidth - margin - 2; // Total column position (right aligned)
-    
-    doc.text('BESCHREIBUNG', tableStart, yPos);
-    doc.text('MENGE', qtyWidth, yPos, { align: 'center' });
-    doc.text('EINHEIT', unitWidth, yPos, { align: 'center' });
-    doc.text('PREIS', priceWidth, yPos, { align: 'right' });
-    doc.text('TOTAL', totalWidth, yPos, { align: 'right' });
-    yPos += 8;
-
-    // Table rows - clean white/light gray alternating
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    invoice.items.forEach((item: any, idx: number) => {
-      if (yPos > pageHeight - 70) {
-        doc.addPage();
-        yPos = margin + 10;
-      }
-
-      // Alternate row colors (white and very light gray)
-      if (idx % 2 === 0) {
-        doc.setFillColor(255, 255, 255);
-      } else {
-        doc.setFillColor(248, 250, 252);
-      }
-      doc.rect(margin + 8, yPos - 4, pageWidth - 2 * margin - 8, 7, 'F');
-
-      doc.setFontSize(9);
-      const descLines = doc.splitTextToSize(item.description, descWidth - 3);
-      const firstLine = descLines[0];
-      doc.text(firstLine, tableStart, yPos);
-      
-      // Quantity
-      doc.text(item.quantity.toString(), qtyWidth, yPos, { align: 'center' });
-      
-      // Unit (Stück)
-      doc.text('Stück', unitWidth, yPos, { align: 'center' });
-      
-      // Unit Price (right-aligned)
-      doc.text(`CHF ${item.unitPrice.toFixed(2)}`, priceWidth, yPos, { align: 'right' });
-      
-      // Total (right-aligned, bold)
-      doc.setFont('helvetica', 'bold');
-      doc.text(`CHF ${item.total.toFixed(2)}`, totalWidth, yPos, { align: 'right' });
-      doc.setFont('helvetica', 'normal');
-      
-      yPos += 7;
-      
-      // Additional description lines
-      if (descLines.length > 1) {
-        descLines.slice(1).forEach((line: string) => {
-          if (yPos > pageHeight - 70) {
-            doc.addPage();
-            yPos = margin + 10;
-          }
-          doc.text(line, tableStart, yPos);
-          yPos += 5;
-          // Adjust for continuation lines - don't repeat other columns
-          yPos -= 1;
-        });
-      }
-    });
-
-    yPos += 5;
-    if (yPos > pageHeight - 50) {
-      doc.addPage();
-      yPos = margin;
-    }
-
-    // Totals section - professional style
-    yPos += 3;
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.3);
-    doc.line(pageWidth - margin - 75, yPos, pageWidth - margin - 2, yPos);
-    yPos += 8;
-
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    doc.text('Zwischentotal:', pageWidth - margin - 60, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.subtotal.toFixed(2)}`, pageWidth - margin - 2, yPos, { align: 'right' });
-    yPos += 7;
-
-    doc.text(`MWST (${invoice.taxRate}%):`, pageWidth - margin - 60, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.taxAmount.toFixed(2)}`, pageWidth - margin - 2, yPos, { align: 'right' });
-    yPos += 10;
-
-    // Total with blue emphasis (like examples)
-    doc.setFillColor(...lightBlue);
-    doc.rect(pageWidth - margin - 85, yPos - 3, 83, 8, 'F');
-    
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.5);
-    doc.line(pageWidth - margin - 85, yPos - 3, pageWidth - margin - 2, yPos - 3);
-    doc.text('Gesamtbetrag:', pageWidth - margin - 60, yPos + 2, { align: 'right' });
-    doc.setTextColor(...blueColor);
-    doc.text(`CHF ${invoice.total.toFixed(2)}`, pageWidth - margin - 2, yPos + 2, { align: 'right' });
-    yPos += 15;
-
-    doc.setTextColor(0, 0, 0);
-    
-    // Closing message
-    if (invoice.type === 'estimate') {
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text('Bei Fragen stehen wir Ihnen jederzeit gerne zur Verfügung.', margin + 8, yPos);
-      yPos += 8;
-    }
-
-    // Notes
-    if (invoice.notes) {
-      if (yPos > pageHeight - 40) {
-        doc.addPage();
-        yPos = margin;
-      }
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Bemerkungen:', margin, yPos);
-      yPos += 6;
-      doc.setFont('helvetica', 'normal');
-      const notesLines = doc.splitTextToSize(invoice.notes, pageWidth - 2 * margin);
-      notesLines.forEach((line: string) => {
-        if (yPos > pageHeight - 20) {
-          doc.addPage();
-          yPos = margin;
-        }
-        doc.text(line, margin, yPos);
-        yPos += 5;
-      });
-    }
-
-    // Footer on all pages
-    const pageCount = doc.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(150, 150, 150);
-      doc.text(
-        `Seite ${i} von ${pageCount}`,
-        pageWidth / 2,
-        pageHeight - 10,
-        { align: 'center' }
-      );
-      doc.text(
-        'Ocean Garage - Fahrzeugreparatur & Service',
-        pageWidth / 2,
-        pageHeight - 5,
-        { align: 'center' }
-      );
-    }
-
-    // Return as data URL
-    return doc.output('dataurlstring');
-  };
-
-
-
-
-  const openWhatsApp = (invoice: any, phoneNumber?: string) => {
-    const phone = phoneNumber || selectedVehicle?.customerPhone || invoice.customerPhone || invoiceFormData.customerPhone;
-    if (!phone) {
-      toast.error('Fahrzeug hat keine Telefonnummer');
-      return;
-    }
-
-    const cleanPhone = phone.replace(/[^\d+]/g, '');
-    const message = `Guten Tag,\n\nanbei erhalten Sie Ihr ${invoice.type === 'invoice' ? 'Rechnung' : 'Angebot'}:\n\nRechnungsnummer: ${invoice.invoiceNumber}\nGesamtbetrag: CHF ${invoice.total.toFixed(2)}\n\nBitte kontaktieren Sie uns bei Fragen.\n\nFreundliche Grüsse\nOcean Garage`;
-
-    // Open WhatsApp Web or app
-    const whatsappUrl = `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
-    toast.success('WhatsApp geöffnet');
-  };
-
-  const sendEmail = (invoice: any, email?: string) => {
-    const customerEmail = email || selectedVehicle?.customerEmail || invoice.customerEmail || invoiceFormData.customerEmail;
-    if (!customerEmail) {
-      toast.error('Fahrzeug hat keine E-Mail-Adresse');
-      return;
-    }
-
-    const subject = `${invoice.type === 'invoice' ? 'Rechnung' : 'Angebot'} ${invoice.invoiceNumber}`;
-    const body = `Guten Tag,\n\nanbei erhalten Sie Ihr ${invoice.type === 'invoice' ? 'Rechnung' : 'Angebot'}:\n\nRechnungsnummer: ${invoice.invoiceNumber}\nGesamtbetrag: CHF ${invoice.total.toFixed(2)}\n\nBitte kontaktieren Sie uns bei Fragen.\n\nFreundliche Grüsse\nOcean Garage`;
-
-    const mailtoUrl = `mailto:${customerEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = mailtoUrl;
-    toast.success('E-Mail-Client geöffnet');
   };
 
   return (
@@ -845,7 +455,7 @@ export default function Vehicles() {
         <div>
           <h1 className="text-2xl font-bold text-neutral-900">Fahrzeuge</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {totalVehicles} Fahrzeuge • {activeVehicles} aktiv
+            {totalVehicles} Fahrzeuge • {activeCount} aktiv
           </p>
         </div>
         <Link to="/vehicles/new" className="btn btn-primary">
@@ -854,8 +464,35 @@ export default function Vehicles() {
         </Link>
       </div>
 
+      {/* Status Filter Tabs */}
+      <div className="flex gap-1 bg-neutral-100 p-1 rounded-xl w-fit">
+        {([
+          { value: 'all', label: 'Alle', count: totalVehicles },
+          { value: 'on_hold', label: 'Wartend', count: draftCount },
+          { value: 'active', label: 'Aktiv', count: activeCount },
+          { value: 'completed', label: 'Fertig', count: completedCount },
+        ] as const).map((tab) => (
+          <button
+            key={tab.value}
+            onClick={() => setStatusFilter(tab.value)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              statusFilter === tab.value
+                ? 'bg-white text-neutral-900 shadow-sm'
+                : 'text-neutral-500 hover:text-neutral-700'
+            }`}
+          >
+            {tab.label}
+            <span className={`ml-1.5 text-xs ${
+              statusFilter === tab.value ? 'text-neutral-500' : 'text-neutral-400'
+            }`}>
+              {tab.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="card">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
@@ -869,23 +506,34 @@ export default function Vehicles() {
         </div>
         <div className="card">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
-              <Check className="w-5 h-5 text-success-600" />
+            <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+              <Clock className="w-5 h-5 text-amber-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-neutral-900">{activeVehicles}</p>
+              <p className="text-2xl font-bold text-neutral-900">{draftCount}</p>
+              <p className="text-xs text-neutral-500">Wartend</p>
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-success-100 rounded-lg flex items-center justify-center">
+              <Play className="w-5 h-5 text-success-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-neutral-900">{activeCount}</p>
               <p className="text-xs text-neutral-500">Aktiv</p>
             </div>
           </div>
         </div>
         <div className="card">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
-              <Pause className="w-5 h-5 text-neutral-500" />
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <CheckCircle2 className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-neutral-900">{totalVehicles - activeVehicles}</p>
-              <p className="text-xs text-neutral-500">Wartend</p>
+              <p className="text-2xl font-bold text-neutral-900">{completedCount}</p>
+              <p className="text-xs text-neutral-500">Fertig</p>
             </div>
           </div>
         </div>
@@ -923,7 +571,7 @@ export default function Vehicles() {
           )}
         </div>
       ) : (
-        <div className="card p-0 overflow-hidden">
+        <div className="card p-0 overflow-visible">
           <table className="w-full">
             <thead>
               <tr className="border-b border-neutral-200 bg-neutral-50">
@@ -985,7 +633,11 @@ export default function Vehicles() {
                           onClick={(e) => {
                             e.stopPropagation();
                             setActivatingVehicle(vehicle);
-                            setSelectedProducts([]);
+                            if (vehicle.selectedParts && Array.isArray(vehicle.selectedParts)) {
+                              setSelectedProducts(vehicle.selectedParts);
+                            } else {
+                              setSelectedProducts([]);
+                            }
                             setShowActivationModal(true);
                           }}
                           className="btn btn-sm bg-success-50 text-success-700 hover:bg-success-100"
@@ -994,13 +646,132 @@ export default function Vehicles() {
                           <span className="hidden sm:inline">Start</span>
                         </button>
                       )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleQuickInvoice(vehicle, 'estimate'); }}
-                        className="p-1.5 hover:bg-neutral-100 rounded-lg transition-colors"
-                        title="Angebot"
-                      >
-                        <FileText className="w-4 h-4 text-neutral-500" />
-                      </button>
+                      {vehicle.status === 'active' && (
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenCompletion(vehicle);
+                            }}
+                            className="btn btn-sm bg-blue-50 text-blue-700 hover:bg-blue-100"
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span className="hidden sm:inline">Fertig</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNachbestellungVehicle(vehicle);
+                              setShowNachbestellungModal(true);
+                            }}
+                            className="btn btn-sm bg-orange-50 text-orange-700 hover:bg-orange-100"
+                            title="Nachbestellung"
+                          >
+                            <ShoppingCart className="w-3 h-3" />
+                            <span className="hidden sm:inline">Nachbestellen</span>
+                          </button>
+                        </>
+                      )}
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDropdown(vehicle.id);
+                          }}
+                          className="flex items-center gap-0.5 p-1.5 hover:bg-neutral-100 rounded-lg transition-colors"
+                          title="Angebot / Rechnung"
+                        >
+                          <FileText className="w-4 h-4 text-neutral-500" />
+                          <ChevronDown className="w-3 h-3 text-neutral-400" />
+                        </button>
+                        {openDropdownId === vehicle.id && (
+                          <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-neutral-200 py-1 z-50 min-w-[240px]">
+                            {/* Existing invoices */}
+                            {dropdownLoading ? (
+                              <div className="px-3 py-2 flex items-center gap-2 text-xs text-neutral-400">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Laden...
+                              </div>
+                            ) : dropdownInvoices.length > 0 ? (
+                              <>
+                                {dropdownInvoices.map((inv: any) => (
+                                  <div
+                                    key={inv.id}
+                                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-neutral-50 transition-colors"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDropdownId(null);
+                                        navigate(`/invoices/${inv.id}`);
+                                      }}
+                                      className="flex-1 text-left text-xs text-neutral-600 hover:text-primary-600 truncate"
+                                    >
+                                      {inv.invoiceNumber}
+                                    </button>
+                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${
+                                      inv.type === 'estimate'
+                                        ? 'bg-purple-50 text-purple-600'
+                                        : 'bg-blue-50 text-blue-600'
+                                    }`}>
+                                      {inv.type === 'estimate' ? 'Angebot' : 'Rechnung'}
+                                    </span>
+                                    {inv.pdfUrl && (
+                                      <a
+                                        href={inv.pdfUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="p-0.5 hover:bg-neutral-100 rounded text-neutral-400 hover:text-primary-600 transition-colors flex-shrink-0"
+                                        title="PDF herunterladen"
+                                      >
+                                        <Download className="w-3 h-3" />
+                                      </a>
+                                    )}
+                                  </div>
+                                ))}
+                                <div className="border-t border-neutral-100 my-1" />
+                              </>
+                            ) : null}
+
+                            {/* Create actions — status-based */}
+                            {(() => {
+                              const estCount = dropdownInvoices.filter((i: any) => i.type === 'estimate').length;
+                              const invCount = dropdownInvoices.filter((i: any) => i.type === 'invoice').length;
+                              const status = vehicle.status;
+                              const showEstimate = status === 'on_hold' || status === 'completed' || !status;
+                              const showInvoice = status === 'active' || status === 'completed';
+                              return (
+                                <>
+                                  {showEstimate && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleQuickInvoice(vehicle, 'estimate');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                                    >
+                                      {estCount > 0 ? `${estCount + 1}. ` : ''}Angebot erstellen
+                                    </button>
+                                  )}
+                                  {showInvoice && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleQuickInvoice(vehicle, 'invoice');
+                                      }}
+                                      className="w-full text-left px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors"
+                                    >
+                                      {invCount > 0 ? `${invCount + 1}. ` : ''}Rechnung erstellen
+                                    </button>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleEdit(vehicle); }}
                         className="p-1.5 hover:bg-neutral-100 rounded-lg transition-colors"
@@ -1008,13 +779,15 @@ export default function Vehicles() {
                       >
                         <Edit className="w-4 h-4 text-neutral-500" />
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDelete(vehicle.id); }}
-                        className="p-1.5 hover:bg-danger-50 rounded-lg transition-colors"
-                        title="Löschen"
-                      >
-                        <Trash2 className="w-4 h-4 text-danger-500" />
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openDeleteModal(vehicle); }}
+                          className="p-1.5 hover:bg-danger-50 rounded-lg transition-colors"
+                          title="Löschen"
+                        >
+                          <Trash2 className="w-4 h-4 text-danger-500" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1381,320 +1154,29 @@ export default function Vehicles() {
 
       {/* Quick Invoice/Quote Modal */}
       {showInvoiceModal && selectedVehicle && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-6xl w-full max-h-[90vh] flex flex-col shadow-2xl animate-slide-up">
-            <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex items-center justify-between rounded-t-3xl z-10">
-              <div>
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
-                  {invoiceType === 'invoice' ? 'Rechnung erstellen' : 'Angebot erstellen'}
-                </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Fahrzeug: {selectedVehicle.brand} {selectedVehicle.model} ({selectedVehicle.vin})
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setShowInvoiceModal(false);
-                  setCreatedInvoice(null);
-                  setModalStep(1);
-                  setPdfBlob(null);
-                }}
-                className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 hover:scale-110"
-              >
-                <X className="w-5 h-5 text-gray-600" />
-              </button>
-            </div>
-
-            <div className="flex flex-col h-full max-h-[90vh]">
-              <div className="flex-1 overflow-y-auto p-6">
-                {modalStep === 1 ? (
-                  // STEP 1: Review/Edit Items & Customer Info
-                  <div className="space-y-6">
-                  {/* Customer Info - Editable */}
-                  <div>
-                    <h3 className="text-lg font-semibold mb-3">Kundeninformationen</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Kundenname *</label>
-                        <input
-                          type="text"
-                          value={invoiceFormData.customerName}
-                          onChange={(e) => setInvoiceFormData({ ...invoiceFormData, customerName: e.target.value })}
-                          required
-                          className="input text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">E-Mail</label>
-                        <input
-                          type="email"
-                          value={invoiceFormData.customerEmail}
-                          onChange={(e) => setInvoiceFormData({ ...invoiceFormData, customerEmail: e.target.value })}
-                          className="input text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Telefon</label>
-                        <input
-                          type="tel"
-                          value={invoiceFormData.customerPhone}
-                          onChange={(e) => setInvoiceFormData({ ...invoiceFormData, customerPhone: e.target.value })}
-                          className="input text-sm"
-                          placeholder="+41..."
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">MwSt. (%)</label>
-                        <input
-                          type="number"
-                          value={invoiceFormData.taxRate}
-                          onChange={(e) => setInvoiceFormData({ ...invoiceFormData, taxRate: e.target.value })}
-                          step="0.1"
-                          className="input text-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Items - Editable */}
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold">Positionen</h3>
-                      <button
-                        type="button"
-                        onClick={addItem}
-                        className="btn btn-secondary text-xs flex items-center gap-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Hinzufügen
-                      </button>
-                    </div>
-                    <div className="space-y-2 border border-gray-200 rounded-lg p-3">
-                      {invoiceFormData.items.length === 0 ? (
-                        <p className="text-sm text-gray-500 text-center py-4">Keine Positionen vorhanden</p>
-                      ) : (
-                        invoiceFormData.items.map((item, index) => (
-                          <div key={index} className="grid grid-cols-12 gap-2 items-center bg-gray-50 p-2 rounded">
-                            <div className="col-span-5">
-                              <input
-                                type="text"
-                                value={item.description}
-                                onChange={(e) => updateItem(index, 'description', e.target.value)}
-                                placeholder="Beschreibung"
-                                className="input text-xs"
-                                required
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <input
-                                type="number"
-                                value={item.quantity}
-                                onChange={(e) => updateItem(index, 'quantity', e.target.value)}
-                                placeholder="Menge"
-                                className="input text-xs"
-                                step="0.01"
-                                required
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <input
-                                type="number"
-                                value={item.unitPrice}
-                                onChange={(e) => updateItem(index, 'unitPrice', e.target.value)}
-                                placeholder="Preis"
-                                className="input text-xs"
-                                step="0.01"
-                                required
-                              />
-                            </div>
-                            <div className="col-span-2 text-right text-xs font-semibold">
-                              CHF {item.total.toFixed(2)}
-                            </div>
-                            <div className="col-span-1">
-                              <button
-                                type="button"
-                                onClick={() => removeItem(index)}
-                                className="p-1 hover:bg-red-50 rounded text-red-600"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    
-                    {/* Totals Preview */}
-                    {invoiceFormData.items.length > 0 && (() => {
-                      const subtotal = invoiceFormData.items.reduce((sum, item) => sum + item.total, 0);
-                      const taxRate = parseFloat(invoiceFormData.taxRate) || 7.7;
-                      const taxAmount = subtotal * (taxRate / 100);
-                      const total = subtotal + taxAmount;
-                      
-                      return (
-                        <div className="mt-4 bg-gray-50 rounded-lg p-4 border border-gray-200">
-                          <div className="flex justify-between text-sm mb-1">
-                            <span className="text-gray-600">Zwischensumme:</span>
-                            <span className="font-semibold">CHF {subtotal.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between text-sm mb-1">
-                            <span className="text-gray-600">MwSt. ({taxRate}%):</span>
-                            <span className="font-semibold">CHF {taxAmount.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between text-base font-bold mt-2 pt-2 border-t border-gray-300">
-                            <span>Gesamtbetrag:</span>
-                            <span className="text-primary-600">CHF {total.toFixed(2)}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Notes */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Bemerkungen</label>
-                    <textarea
-                      value={invoiceFormData.notes}
-                      onChange={(e) => setInvoiceFormData({ ...invoiceFormData, notes: e.target.value })}
-                      rows={2}
-                      className="input text-sm"
-                    />
-                  </div>
-
-                  </div>
-                ) : (
-                  // STEP 2: PDF Preview & Send Options
-                  <div className="space-y-6">
-                    {/* PDF Preview */}
-                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-                      <h3 className="text-lg font-semibold mb-4">PDF Vorschau</h3>
-                      {pdfBlob ? (
-                        <div className="bg-white rounded-lg overflow-hidden shadow-inner">
-                          <iframe
-                            src={pdfBlob}
-                            className="w-full h-[600px] border-0"
-                            title="PDF Preview"
-                          />
-                        </div>
-                      ) : (
-                        <div className="bg-white rounded-lg p-8 text-center">
-                          <div className="w-16 h-16 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin mx-auto mb-4"></div>
-                          <p className="text-gray-600">PDF wird geladen...</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Sticky bottom section with action buttons */}
-              <div className="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-b-3xl shadow-lg">
-                {modalStep === 1 ? (
-                  <div className="flex gap-3">
-                    <button
-                      onClick={createInvoiceOrQuote}
-                      disabled={isCreating || !invoiceFormData.customerName || invoiceFormData.items.length === 0}
-                      className="btn btn-primary flex-1 disabled:opacity-50"
-                    >
-                      {isCreating ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                          Erstelle...
-                        </>
-                      ) : (
-                        <>
-                          {invoiceType === 'invoice' ? 'Rechnung erstellen' : 'Angebot erstellen'}
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowInvoiceModal(false);
-                        setCreatedInvoice(null);
-                        setModalStep(1);
-                      }}
-                      className="btn btn-secondary"
-                      disabled={isCreating}
-                    >
-                      Abbrechen
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    {/* Send Options */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                      <button
-                        onClick={() => {
-                          if (pdfBlob) {
-                            const link = document.createElement('a');
-                            link.href = pdfBlob;
-                            link.download = `${createdInvoice.invoiceNumber}.pdf`;
-                            link.click();
-                            toast.success('PDF heruntergeladen');
-                          }
-                        }}
-                        className="btn btn-primary flex items-center justify-center gap-2"
-                      >
-                        <Download className="w-4 h-4" />
-                        PDF herunterladen
-                      </button>
-                      {(selectedVehicle?.customerPhone || invoiceFormData.customerPhone) && (
-                        <button
-                          onClick={() => {
-                            const phone = selectedVehicle?.customerPhone || invoiceFormData.customerPhone;
-                            openWhatsApp(createdInvoice, phone);
-                          }}
-                          className="btn bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2"
-                        >
-                          <Send className="w-4 h-4" />
-                          WhatsApp senden
-                        </button>
-                      )}
-                      {(selectedVehicle?.customerEmail || invoiceFormData.customerEmail) && (
-                        <button
-                          onClick={() => {
-                            const email = selectedVehicle?.customerEmail || invoiceFormData.customerEmail;
-                            sendEmail(createdInvoice, email);
-                          }}
-                          className="btn bg-primary-600 hover:bg-primary-700 text-white flex items-center justify-center gap-2"
-                        >
-                          <Mail className="w-4 h-4" />
-                          E-Mail senden
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="flex gap-3 pt-3 border-t">
-                      <button
-                        onClick={() => setModalStep(1)}
-                        className="btn btn-secondary flex items-center gap-2"
-                      >
-                        <X className="w-4 h-4" />
-                        Zurück bearbeiten
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowInvoiceModal(false);
-                          setCreatedInvoice(null);
-                          setModalStep(1);
-                          setPdfBlob(null);
-                          fetchVehicles();
-                        }}
-                        className="btn btn-primary flex-1"
-                      >
-                        Fertig
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <CreateInvoiceModal
+          isOpen={showInvoiceModal}
+          vehicle={selectedVehicle}
+          type={invoiceType}
+          ordinal={
+            (invoiceType === 'invoice'
+              ? dropdownInvoices.filter((i: any) => i.type === 'invoice').length
+              : dropdownInvoices.filter((i: any) => i.type === 'estimate').length) + 1
+          }
+          onClose={() => {
+            setShowInvoiceModal(false);
+            setSelectedVehicle(null);
+          }}
+          onCreated={() => {
+            setShowInvoiceModal(false);
+            setSelectedVehicle(null);
+            fetchVehicles();
+          }}
+        />
       )}
 
       {/* Vehicle Activation Modal - For activating on_hold vehicles */}
-      {showActivationModal && activatingVehicle && (
+      {showActivationModal && activatingVehicle && createPortal(
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
           <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl animate-slide-up">
             <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex items-center justify-between rounded-t-3xl z-10">
@@ -1733,32 +1215,84 @@ export default function Vehicles() {
                 </div>
               </div>
 
-              {/* Service type info */}
-              {activatingVehicle.serviceType && (
+              {/* Service template info */}
+              {activatingVehicle.serviceTemplate && (
                 <div className="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
-                  <span className="font-medium">Service:</span>{' '}
-                  {activatingVehicle.serviceType === 'small_service' ? 'Kleine Wartung' :
-                   activatingVehicle.serviceType === 'big_service' ? 'Grosse Wartung' :
-                   activatingVehicle.serviceType === 'brake_service' ? 'Bremsenservice' :
-                   activatingVehicle.serviceType === 'inspection' ? 'Inspektion' :
-                   activatingVehicle.serviceType === 'tire_change' ? 'Reifenwechsel' :
-                   activatingVehicle.serviceType}
+                  <span className="font-medium">Service-Vorlage:</span>{' '}
+                  {activatingVehicle.serviceTemplate.name}
                 </div>
               )}
 
-              {/* Derendinger Product Picker */}
-              <DerendingerProductPicker
-                vin={activatingVehicle.vin}
-                serviceType={activatingVehicle.serviceType || ''}
-                selectedProducts={selectedProducts}
-                onProductsSelected={setSelectedProducts}
-                vehicleId={activatingVehicle.id}
-                showOrderButton={true}
-                onOrderComplete={(orderId) => {
-                  toast.success('Bestellung bei Derendinger übermittelt!');
-                  console.log('Order completed:', orderId);
-                }}
-              />
+              {/* Saved parts from draft phase */}
+              {selectedProducts.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Gespeicherte Ersatzteile aus Angebot</h3>
+                  <div className="space-y-2">
+                    {selectedProducts.map((product, idx) => (
+                      <div key={product.id || idx} className="flex items-center justify-between p-3 bg-primary-50 border border-primary-200 rounded-lg">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 text-sm truncate">
+                            {product.name || `${product.supplier} ${product.articleNumber}`}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {product.supplier} • {product.articleNumber}
+                            {product.categoryName && ` • ${product.categoryName}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                if (product.quantity <= 1) {
+                                  setSelectedProducts(selectedProducts.filter((_, i) => i !== idx));
+                                } else {
+                                  setSelectedProducts(selectedProducts.map((p, i) => i === idx ? { ...p, quantity: p.quantity - 1 } : p));
+                                }
+                              }}
+                              className="w-7 h-7 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center text-sm font-bold"
+                            >
+                              -
+                            </button>
+                            <span className="w-6 text-center font-medium text-sm">{product.quantity}</span>
+                            <button
+                              onClick={() => {
+                                setSelectedProducts(selectedProducts.map((p, i) => i === idx ? { ...p, quantity: p.quantity + 1 } : p));
+                              }}
+                              className="w-7 h-7 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center text-sm font-bold"
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span className="text-sm font-semibold text-gray-900 w-20 text-right">
+                            {getPartPrice(product.price) > 0
+                              ? `CHF ${(getPartPrice(product.price) * product.quantity).toFixed(2)}`
+                              : 'Kein Preis'}
+                          </span>
+                          <button
+                            onClick={() => setSelectedProducts(selectedProducts.filter((_, i) => i !== idx))}
+                            className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-500"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex justify-end pt-2 text-sm">
+                      <span className="font-semibold text-gray-900">
+                        Total: CHF {selectedProducts.reduce((sum, p) => sum + getPartPrice(p.price) * (p.quantity || 1), 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {selectedProducts.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>Keine Ersatzteile gespeichert</p>
+                  <p className="text-sm mt-1">Das Fahrzeug wird ohne Teile-Ausgaben aktiviert</p>
+                </div>
+              )}
             </div>
 
             {/* Footer with action buttons */}
@@ -1781,23 +1315,56 @@ export default function Vehicles() {
                     try {
                       // Create expenses for selected products
                       if (selectedProducts.length > 0) {
+                        let created = 0;
                         for (const product of selectedProducts) {
+                          const price = getPartPrice(product.price);
+                          const qty = Number(product.quantity) || 1;
+                          const amount = Math.round(price * qty * 100) / 100;
+                          if (amount <= 0) continue;
                           await api.post('/expenses', {
                             vehicleId: activatingVehicle.id,
-                            description: `${product.quantity}x ${product.supplier} ${product.articleNumber} - ${product.categoryName}`,
+                            description: `${qty}x ${product.name || product.articleNumber} (${product.supplier})`,
                             category: 'parts',
-                            amount: (product.price || 25) * product.quantity,
+                            amount,
                             date: new Date().toISOString(),
-                            notes: `Derendinger Artikel-ID: ${product.id}`,
+                            notes: product.articleNumber ? `Derendinger: ${product.supplier} ${product.articleNumber}` : undefined,
                           });
+                          created++;
                         }
-                        toast.success(`${selectedProducts.length} Ersatzteile bestellt!`);
+                        if (created > 0) {
+                          toast.success(`${created} Ersatzteile als Ausgaben erfasst!`);
+                        }
+
+                        // Place actual Derendinger order (cart/add → order/place)
+                        const productsWithRaw = selectedProducts.filter((p: any) => p._rawArticle && p._rawCategory);
+                        if (productsWithRaw.length > 0) {
+                          try {
+                            for (const product of productsWithRaw) {
+                              await api.post('/derendinger/cart/add', {
+                                rawArticle: (product as any)._rawArticle,
+                                rawCategory: (product as any)._rawCategory,
+                                rawVehicle: (product as any)._rawVehicle,
+                                quantity: Number(product.quantity) || 1,
+                              });
+                            }
+                            const orderRes = await api.post('/derendinger/order/place', {
+                              reference: `${activatingVehicle.licensePlate || activatingVehicle.vin}`,
+                            });
+                            if (orderRes.data.success) {
+                              toast.success(`Derendinger-Bestellung erfolgreich! ${orderRes.data.orderNumber ? `Nr: ${orderRes.data.orderNumber}` : ''}`);
+                            }
+                          } catch (orderErr: any) {
+                            console.error('Derendinger order error:', orderErr);
+                            toast.error('Teile konnten nicht bei Derendinger bestellt werden: ' + (orderErr.response?.data?.message || orderErr.message));
+                          }
+                        }
                       }
 
-                      // Update vehicle status to active
-                      await api.patch(`/vehicles/${activatingVehicle.id}`, { 
+                      // Update vehicle status to active and clear savedParts
+                      await api.patch(`/vehicles/${activatingVehicle.id}`, {
                         status: 'active',
-                        isActive: true 
+                        isActive: true,
+                        selectedParts: null,
                       });
                       
                       toast.success('Fahrzeug aktiviert - Arbeiten können beginnen!');
@@ -1831,7 +1398,239 @@ export default function Vehicles() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Completion Summary Modal */}
+      {showCompletionModal && completingVehicle && createPortal(
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden animate-slide-up">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-5 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold">Auftrag abschliessen</h2>
+                  <p className="text-blue-200 text-sm mt-0.5">
+                    {completingVehicle.brand} {completingVehicle.model} {completingVehicle.licensePlate ? `· ${completingVehicle.licensePlate}` : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowCompletionModal(false);
+                    setCompletingVehicle(null);
+                    setCompletionData(null);
+                  }}
+                  className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {completionLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+              </div>
+            ) : completionData ? (
+              <div className="p-6 space-y-5">
+                {/* Invoice status warning */}
+                {!completionData.invoice ? (
+                  <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-900">Keine Rechnung erstellt</p>
+                      <p className="text-xs text-amber-700 mt-0.5">Für dieses Fahrzeug wurde noch keine Rechnung erstellt.</p>
+                    </div>
+                  </div>
+                ) : !completionData.invoicePaid ? (
+                  <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-3">
+                    <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-red-900">Rechnung nicht bezahlt</p>
+                      <p className="text-xs text-red-700 mt-0.5">
+                        {completionData.invoice.invoiceNumber} — Status: {completionData.invoice.status === 'sent' ? 'Gesendet' : 'Entwurf'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl p-3">
+                    <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-green-900">Rechnung bezahlt</p>
+                      <p className="text-xs text-green-700 mt-0.5">{completionData.invoice.invoiceNumber}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Revenue */}
+                <div className="bg-gray-50 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">Einnahmen (Rechnung)</span>
+                    <span className="text-sm font-bold text-gray-900">CHF {completionData.revenue.toFixed(2)}</span>
+                  </div>
+
+                  <div className="border-t border-gray-200 pt-3 space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Kosten</p>
+
+                    {/* Expenses */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">Teile & Ausgaben</span>
+                      <span className="text-sm font-medium text-red-600">- CHF {completionData.expensesTotal.toFixed(2)}</span>
+                    </div>
+
+                    {/* Worker costs */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">
+                        Lohnkosten ({completionData.laborHours.toFixed(1)}h)
+                      </span>
+                      <span className="text-sm font-medium text-red-600">- CHF {completionData.laborCost.toFixed(2)}</span>
+                    </div>
+
+                    {/* Worker breakdown */}
+                    {completionData.workers.length > 0 && (
+                      <div className="ml-4 space-y-1">
+                        {completionData.workers.map((w, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs text-gray-500">
+                            <span>{w.name} — {w.hours.toFixed(1)}h × CHF {w.rate.toFixed(0)}</span>
+                            <span>CHF {w.cost.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Profit */}
+                  <div className="border-t-2 border-gray-300 pt-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-base font-bold text-gray-900">Gewinn</span>
+                      <span className={`text-xl font-bold ${completionData.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        CHF {completionData.profit.toFixed(2)}
+                      </span>
+                    </div>
+                    {completionData.revenue > 0 && (
+                      <div className="flex justify-end mt-0.5">
+                        <span className={`text-xs font-medium ${completionData.profit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {((completionData.profit / completionData.revenue) * 100).toFixed(1)}% Marge
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Footer */}
+            {!completionLoading && completionData && (
+              <div className="border-t border-gray-200 px-6 py-4 flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowCompletionModal(false);
+                    setCompletingVehicle(null);
+                    setCompletionData(null);
+                  }}
+                  className="btn btn-secondary"
+                  disabled={isCompleting}
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={handleConfirmCompletion}
+                  disabled={isCompleting}
+                  className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+                >
+                  {isCompleting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Wird abgeschlossen...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      Auftrag abschliessen
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+            <div className="p-6">
+              <div className="w-14 h-14 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="w-7 h-7 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 text-center mb-2">Fahrzeug endgültig löschen?</h3>
+              <p className="text-sm text-gray-600 text-center mb-4">
+                <span className="font-semibold">{deleteTarget.brand} {deleteTarget.model}</span>
+                {' '}({deleteTarget.vin})
+              </p>
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-5">
+                <p className="text-xs text-red-800 font-medium mb-1">Folgende Daten werden unwiderruflich gelöscht:</p>
+                <ul className="text-xs text-red-700 space-y-0.5 list-disc list-inside">
+                  <li>Alle Rechnungen und Angebote</li>
+                  <li>Alle Ausgaben</li>
+                  <li>Alle Zeiterfassungen</li>
+                  <li>Alle Termine</li>
+                  <li>Gespeicherte PDFs</li>
+                </ul>
+              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tippen Sie <span className="font-mono font-bold text-red-600">DELETE</span> um zu bestätigen
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="DELETE"
+                className="input w-full mb-4 font-mono text-center text-lg tracking-widest"
+                autoFocus
+              />
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setDeleteTarget(null); setDeleteConfirmText(''); }}
+                  className="btn btn-secondary flex-1"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteConfirmText !== 'DELETE'}
+                  className={`flex-1 px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
+                    deleteConfirmText === 'DELETE'
+                      ? 'bg-red-600 text-white hover:bg-red-700'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  Endgültig löschen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Nachbestellung Modal */}
+      {showNachbestellungModal && nachbestellungVehicle && (
+        <NachbestellungModal
+          vehicle={nachbestellungVehicle}
+          onClose={() => {
+            setShowNachbestellungModal(false);
+            setNachbestellungVehicle(null);
+          }}
+          onOrderComplete={() => {
+            setShowNachbestellungModal(false);
+            setNachbestellungVehicle(null);
+            fetchVehicles();
+          }}
+        />
       )}
     </div>
   );

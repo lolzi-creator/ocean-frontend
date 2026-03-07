@@ -65,6 +65,7 @@ export default function CarTimeLogs() {
         vehicleId: formData.vehicleId,
         hours: hours,
         notes: formData.notes || undefined,
+        date: formData.date,
       });
 
       toast.success(`${hours} Stunden erfolgreich erfasst!`, {

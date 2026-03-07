@@ -4,7 +4,8 @@ import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { ArrowLeft, Download, Printer, FileText, Edit, Send, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
-import jsPDF from 'jspdf';
+import { generateInvoicePDF } from '../utils/invoicePDF';
+import type { InvoiceData, CompanyBankingDetails } from '../utils/invoicePDF';
 
 interface Invoice {
   id: string;
@@ -25,6 +26,8 @@ interface Invoice {
   taxAmount: number;
   total: number;
   notes?: string;
+  paymentMethod: 'cash' | 'qr_invoice';
+  paymentReference?: string;
   createdAt: string;
   vehicle: {
     id: string;
@@ -85,306 +88,61 @@ export default function InvoiceDetail() {
     }
   };
 
-  const generatePDF = () => {
+  const handleDownloadPDF = async () => {
     if (!invoice) return;
 
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
-    const blueColor: [number, number, number] = [2, 132, 199]; // primary-600: #0284c7
-    const lightBlue: [number, number, number] = [241, 245, 249]; // slate-100 for backgrounds
-    let yPos = margin;
+    let bankingDetails: CompanyBankingDetails | undefined;
+    let swissCrossBase64: string | undefined;
 
-    // Blue vertical bar on left (like the examples)
-    doc.setFillColor(...blueColor);
-    doc.rect(margin, yPos, 4, pageHeight - margin * 2, 'F');
-
-    // Company name header (no logo, just text)
-    doc.setFontSize(28);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...blueColor);
-    doc.text('OCEANCAR', margin + 8, yPos + 12);
-    yPos += 25;
-
-    // Company info section (right side, like the examples)
-    const companyInfoX = pageWidth - margin;
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    
-    // Company name bold
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.text('Ocean Garage', companyInfoX, yPos - 18, { align: 'right' });
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    const companyInfo = [
-      'Fahrzeugreparatur & Service',
-      'Schweiz',
-    ];
-    companyInfo.forEach((line, idx) => {
-      doc.text(line, companyInfoX, yPos - 10 + (idx * 5), { align: 'right' });
-    });
-
-    yPos += 15;
-
-    // Document type (large, blue, top right)
-    doc.setFontSize(32);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...blueColor);
-    const docType = invoice.type === 'invoice' ? 'RECHNUNG' : 'ANGEBOT';
-    doc.text(docType, companyInfoX, yPos, { align: 'right' });
-    yPos += 10;
-
-    // Offer/Invoice details box (top right, like examples)
-    const detailBoxY = yPos;
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(60, 60, 60);
-    
-    const docNumber = invoice.invoiceNumber.replace('INV-', 'EST-');
-    const validUntil = format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'dd.MM.yyyy');
-    
-    doc.text(`Offerten-Nr.: ${docNumber}`, companyInfoX, detailBoxY, { align: 'right' });
-    doc.text(`Datum: ${format(new Date(invoice.createdAt), 'dd.MM.yyyy')}`, companyInfoX, detailBoxY + 5, { align: 'right' });
-    if (invoice.type === 'estimate') {
-      doc.text(`Gültig bis: ${validUntil}`, companyInfoX, detailBoxY + 10, { align: 'right' });
-    }
-    
-    yPos = detailBoxY + 18;
-
-    // Customer info box (left, with background like examples)
-    const customerBoxY = yPos;
-    doc.setFillColor(...lightBlue);
-    const customerBoxHeight = invoice.customerAddress ? 35 : invoice.customerEmail ? 28 : 22;
-    doc.rect(margin + 8, customerBoxY, 75, customerBoxHeight, 'F');
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...blueColor);
-    doc.text(invoice.customerName, margin + 10, customerBoxY + 6);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(0, 0, 0);
-    let customerLineY = customerBoxY + 11;
-    
-    if (invoice.customerEmail) {
-      doc.text(invoice.customerEmail, margin + 10, customerLineY);
-      customerLineY += 5;
-    }
-    if (invoice.customerAddress) {
-      const addressLines = invoice.customerAddress.split('\n');
-      addressLines.forEach((line: string) => {
-        doc.text(line, margin + 10, customerLineY);
-        customerLineY += 5;
-      });
-    }
-
-    // Vehicle info box (right, with background)
-    const vehicleBoxY = customerBoxY;
-    const vehicleBoxHeight = invoice.vehicle.brand && invoice.vehicle.model ? 25 : 20;
-    doc.setFillColor(250, 250, 250);
-    doc.rect(pageWidth - margin - 75, vehicleBoxY, 75, vehicleBoxHeight, 'F');
-    
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.setTextColor(0, 0, 0);
-    doc.text('Fahrzeug:', pageWidth - margin - 73, vehicleBoxY + 6);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    if (invoice.vehicle.brand && invoice.vehicle.model) {
-      doc.text(`${invoice.vehicle.brand} ${invoice.vehicle.model}`, pageWidth - margin - 73, vehicleBoxY + 11);
-      doc.text(`VIN: ${invoice.vehicle.vin}`, pageWidth - margin - 73, vehicleBoxY + 16);
-    } else {
-      doc.text(`VIN: ${invoice.vehicle.vin}`, pageWidth - margin - 73, vehicleBoxY + 11);
-    }
-
-    yPos = Math.max(customerBoxY + customerBoxHeight, vehicleBoxY + vehicleBoxHeight) + 15;
-
-    // Introductory text (like examples)
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    doc.text(
-      invoice.type === 'estimate' 
-        ? 'Vielen Dank für Ihre Anfrage! Wir freuen uns, Ihnen folgende Offerte zu unterbreiten:'
-        : 'Im Folgenden finden Sie die Details zu Ihrer Rechnung:',
-      margin + 8,
-      yPos
-    );
-    yPos += 10;
-
-    // Items table header - professional style
-    doc.setFillColor(...blueColor);
-    doc.rect(margin + 8, yPos - 4, pageWidth - 2 * margin - 8, 7, 'F');
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(255, 255, 255);
-    
-    const tableStart = margin + 10;
-    const descWidth = 75; // Description column width (more space now)
-    const qtyWidth = 100; // Quantity column position
-    const unitWidth = 120; // Unit column position
-    const priceWidth = 145; // Price column position (right-aligned)
-    const totalWidth = pageWidth - margin - 2; // Total column position (right aligned)
-    
-    doc.text('BESCHREIBUNG', tableStart, yPos);
-    doc.text('MENGE', qtyWidth, yPos, { align: 'center' });
-    doc.text('EINHEIT', unitWidth, yPos, { align: 'center' });
-    doc.text('PREIS', priceWidth, yPos, { align: 'right' });
-    doc.text('TOTAL', totalWidth, yPos, { align: 'right' });
-    yPos += 8;
-
-    // Table rows - clean white/light gray alternating
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    invoice.items.forEach((item: any, idx: number) => {
-      if (yPos > pageHeight - 70) {
-        doc.addPage();
-        yPos = margin + 10;
-      }
-
-      // Alternate row colors (white and very light gray)
-      if (idx % 2 === 0) {
-        doc.setFillColor(255, 255, 255);
-      } else {
-        doc.setFillColor(248, 250, 252);
-      }
-      doc.rect(margin + 8, yPos - 4, pageWidth - 2 * margin - 8, 7, 'F');
-
-      doc.setFontSize(9);
-      const descLines = doc.splitTextToSize(item.description, descWidth - 3);
-      const firstLine = descLines[0];
-      doc.text(firstLine, tableStart, yPos);
-      
-      // Quantity
-      doc.text(item.quantity.toString(), qtyWidth, yPos, { align: 'center' });
-      
-      // Unit (Stück)
-      doc.text('Stück', unitWidth, yPos, { align: 'center' });
-      
-      // Unit Price (right-aligned)
-      doc.text(`CHF ${item.unitPrice.toFixed(2)}`, priceWidth, yPos, { align: 'right' });
-      
-      // Total (right-aligned, bold)
-      doc.setFont('helvetica', 'bold');
-      doc.text(`CHF ${item.total.toFixed(2)}`, totalWidth, yPos, { align: 'right' });
-      doc.setFont('helvetica', 'normal');
-      
-      yPos += 7;
-      
-      // Additional description lines
-      if (descLines.length > 1) {
-        descLines.slice(1).forEach((line: string) => {
-          if (yPos > pageHeight - 70) {
-            doc.addPage();
-            yPos = margin + 10;
-          }
-          doc.text(line, tableStart, yPos);
-          yPos += 5;
-          // Adjust for continuation lines - don't repeat other columns
-          yPos -= 1;
+    if (invoice.paymentMethod === 'qr_invoice') {
+      try {
+        const [bankingRes, crossRes] = await Promise.all([
+          api.get('/settings/company-banking'),
+          fetch('/swiss-cross.png').then((r) => r.blob()),
+        ]);
+        bankingDetails = bankingRes.data;
+        swissCrossBase64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(crossRes);
         });
+      } catch {
+        toast.error('Bankdaten konnten nicht geladen werden');
+        return;
       }
-    });
-
-    yPos += 3;
-    if (yPos > pageHeight - 50) {
-      doc.addPage();
-      yPos = margin;
     }
 
-    // Totals section - professional style
-    yPos += 3;
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.3);
-    doc.line(pageWidth - margin - 75, yPos, pageWidth - margin - 2, yPos);
-    yPos += 8;
+    const invoiceData: InvoiceData = {
+      invoiceNumber: invoice.invoiceNumber,
+      type: invoice.type as 'invoice' | 'estimate',
+      customerName: invoice.customerName,
+      customerEmail: invoice.customerEmail,
+      customerAddress: invoice.customerAddress,
+      items: invoice.items,
+      subtotal: invoice.subtotal,
+      taxRate: invoice.taxRate,
+      taxAmount: invoice.taxAmount,
+      total: invoice.total,
+      notes: invoice.notes,
+      createdAt: invoice.createdAt,
+      vehicle: invoice.vehicle,
+      paymentMethod: invoice.paymentMethod,
+      paymentReference: invoice.paymentReference,
+    };
 
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    doc.text('Zwischentotal:', pageWidth - margin - 60, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.subtotal.toFixed(2)}`, pageWidth - margin - 2, yPos, { align: 'right' });
-    yPos += 7;
+    const dataUrl = await generateInvoicePDF(
+      invoiceData,
+      {},
+      bankingDetails,
+      swissCrossBase64,
+    );
 
-    doc.text(`MWST (${invoice.taxRate}%):`, pageWidth - margin - 60, yPos, { align: 'right' });
-    doc.text(`CHF ${invoice.taxAmount.toFixed(2)}`, pageWidth - margin - 2, yPos, { align: 'right' });
-    yPos += 10;
-
-    // Total with blue emphasis (like examples)
-    doc.setFillColor(...lightBlue);
-    doc.rect(pageWidth - margin - 85, yPos - 3, 83, 8, 'F');
-    
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.5);
-    doc.line(pageWidth - margin - 85, yPos - 3, pageWidth - margin - 2, yPos - 3);
-    doc.text('Gesamtbetrag:', pageWidth - margin - 60, yPos + 2, { align: 'right' });
-    doc.setTextColor(...blueColor);
-    doc.text(`CHF ${invoice.total.toFixed(2)}`, pageWidth - margin - 2, yPos + 2, { align: 'right' });
-    yPos += 15;
-
-    doc.setTextColor(0, 0, 0);
-    
-    // Closing message
-    if (invoice.type === 'estimate') {
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text('Bei Fragen stehen wir Ihnen jederzeit gerne zur Verfügung.', margin + 8, yPos);
-      yPos += 8;
+    if (typeof dataUrl === 'string') {
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = `${invoice.invoiceNumber}.pdf`;
+      link.click();
     }
-
-    // Notes
-    if (invoice.notes) {
-      if (yPos > pageHeight - 40) {
-        doc.addPage();
-        yPos = margin;
-      }
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Bemerkungen:', margin + 8, yPos);
-      yPos += 6;
-      doc.setFont('helvetica', 'normal');
-      const notesLines = doc.splitTextToSize(invoice.notes, pageWidth - 2 * margin);
-      notesLines.forEach((line: string) => {
-        if (yPos > pageHeight - 20) {
-          doc.addPage();
-          yPos = margin;
-        }
-        doc.text(line, margin + 8, yPos);
-        yPos += 5;
-      });
-    }
-
-    // Footer on all pages
-    const pageCount = doc.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(150, 150, 150);
-      doc.text(
-        `Seite ${i} von ${pageCount}`,
-        pageWidth / 2,
-        pageHeight - 10,
-        { align: 'center' }
-      );
-      doc.text(
-        'Ocean Garage - Fahrzeugreparatur & Service',
-        pageWidth / 2,
-        pageHeight - 5,
-        { align: 'center' }
-      );
-    }
-
-    // Save PDF
-    doc.save(`${invoice.invoiceNumber}.pdf`);
     toast.success('PDF erfolgreich erstellt');
   };
 
@@ -463,7 +221,7 @@ export default function InvoiceDetail() {
         </button>
         <div className="flex items-center gap-3">
           <button
-            onClick={generatePDF}
+            onClick={handleDownloadPDF}
             className="btn btn-primary flex items-center gap-2"
           >
             <Download className="w-4 h-4" />
@@ -511,6 +269,18 @@ export default function InvoiceDetail() {
                   {getStatusText(invoice.status)}
                 </span>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-gray-700">Zahlungsart:</span>
+                <span className="text-gray-900">
+                  {invoice.paymentMethod === 'qr_invoice' ? 'QR-Rechnung' : 'Barzahlung'}
+                </span>
+              </div>
+              {invoice.paymentReference && (
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-gray-700">Referenz:</span>
+                  <span className="text-gray-900 font-mono">{invoice.paymentReference}</span>
+                </div>
+              )}
             </div>
           </div>
 

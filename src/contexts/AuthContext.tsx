@@ -16,6 +16,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name?: string, role?: string) => Promise<void>;
   logout: () => void;
+  clearWorkerSession: () => void;
   setCurrentWorker: (worker: User) => void;
   isLoading: boolean;
 }
@@ -139,13 +140,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const clearWorkerSession = () => {
+    localStorage.removeItem('currentWorker');
+    localStorage.removeItem('workerToken');
+    setCurrentWorker(null);
+  };
+
   const handleSetCurrentWorker = (worker: User) => {
     setCurrentWorker(worker);
     localStorage.setItem('currentWorker', JSON.stringify(worker));
   };
 
+  // Inactivity timeout — clear worker session after 15 minutes, redirect to worker selection
+  const INACTIVITY_TIMEOUT = 15 * 60 * 1000; // 15 minutes
+
+  useEffect(() => {
+    if (!currentWorker) return;
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        clearWorkerSession();
+        toast('Sitzung abgelaufen — bitte Mitarbeiter erneut wählen', { icon: '🔒', duration: 4000 });
+        window.location.href = '/worker-selection';
+      }, INACTIVITY_TIMEOUT);
+    };
+
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(e => window.addEventListener(e, resetTimer));
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+    };
+  }, [currentWorker]);
+
   return (
-    <AuthContext.Provider value={{ user, currentWorker, login, register, logout, setCurrentWorker: handleSetCurrentWorker, isLoading }}>
+    <AuthContext.Provider value={{ user, currentWorker, login, register, logout, clearWorkerSession, setCurrentWorker: handleSetCurrentWorker, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,5 +1,7 @@
 import jsPDF from 'jspdf';
 import { format } from 'date-fns';
+import { renderQrBillOnPdf } from './swissQrBill';
+import type { QrBillData } from './swissQrBill';
 
 export interface InvoiceItem {
   description: string;
@@ -12,6 +14,15 @@ export interface InvoiceVehicle {
   vin: string;
   brand?: string;
   model?: string;
+}
+
+export interface CompanyBankingDetails {
+  companyName: string;
+  street: string;
+  zip: string;
+  city: string;
+  country: string;
+  iban: string;
 }
 
 export interface InvoiceData {
@@ -28,6 +39,8 @@ export interface InvoiceData {
   notes?: string;
   createdAt: string;
   vehicle: InvoiceVehicle;
+  paymentMethod?: 'cash' | 'qr_invoice';
+  paymentReference?: string;
 }
 
 interface PDFOptions {
@@ -39,13 +52,18 @@ const LIGHT_BLUE: [number, number, number] = [241, 245, 249]; // slate-100
 
 export async function generateInvoicePDF(
   invoice: InvoiceData,
-  options: PDFOptions = {}
+  options: PDFOptions = {},
+  bankingDetails?: CompanyBankingDetails,
+  swissCrossBase64?: string,
 ): Promise<string | Blob> {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
   let yPos = margin;
+
+  const isQrInvoice = invoice.paymentMethod === 'qr_invoice';
+  const qrBillHeight = 105;
 
   // Blue vertical bar on left
   doc.setFillColor(...BLUE_COLOR);
@@ -91,12 +109,14 @@ export async function generateInvoicePDF(
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(60, 60, 60);
 
-  const docNumber = invoice.invoiceNumber.replace('INV-', 'EST-');
+  const isEstimate = invoice.type === 'estimate';
+  const docNumber = invoice.invoiceNumber;
+  const docLabel = isEstimate ? 'Offerten-Nr.' : 'Rechnungs-Nr.';
   const validUntil = format(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), 'dd.MM.yyyy');
 
-  doc.text(`Offerten-Nr.: ${docNumber}`, companyInfoX, detailBoxY, { align: 'right' });
+  doc.text(`${docLabel}: ${docNumber}`, companyInfoX, detailBoxY, { align: 'right' });
   doc.text(`Datum: ${format(new Date(invoice.createdAt), 'dd.MM.yyyy')}`, companyInfoX, detailBoxY + 5, { align: 'right' });
-  if (invoice.type === 'estimate') {
+  if (isEstimate) {
     doc.text(`Gültig bis: ${validUntil}`, companyInfoX, detailBoxY + 10, { align: 'right' });
   }
 
@@ -190,7 +210,7 @@ export async function generateInvoicePDF(
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(0, 0, 0);
   invoice.items.forEach((item: InvoiceItem, idx: number) => {
-    if (yPos > pageHeight - 70) {
+    if (yPos > pageHeight - 30) {
       doc.addPage();
       yPos = margin + 10;
     }
@@ -221,7 +241,7 @@ export async function generateInvoicePDF(
     // Additional description lines
     if (descLines.length > 1) {
       descLines.slice(1).forEach((line: string) => {
-        if (yPos > pageHeight - 70) {
+        if (yPos > pageHeight - 30) {
           doc.addPage();
           yPos = margin + 10;
         }
@@ -301,10 +321,50 @@ export async function generateInvoicePDF(
     });
   }
 
-  // Footer on all pages
+  // Swiss QR bill (if payment method is qr_invoice)
+  if (isQrInvoice && bankingDetails && swissCrossBase64) {
+    const billTop = pageHeight - qrBillHeight;
+    if (yPos > billTop - 5) {
+      doc.addPage();
+    }
+
+    // Parse customer address into structured components
+    const addressLines = (invoice.customerAddress || '').split('\n');
+    const debtorStreet = addressLines[0] || '';
+    const debtorCityLine = addressLines[1] || '';
+    const zipMatch = debtorCityLine.match(/^(\d{4})\s+(.+)$/);
+
+    const qrBillData: QrBillData = {
+      creditorName: bankingDetails.companyName,
+      creditorStreet: bankingDetails.street,
+      creditorZip: bankingDetails.zip,
+      creditorCity: bankingDetails.city,
+      creditorCountry: bankingDetails.country,
+      iban: bankingDetails.iban,
+      amount: invoice.total,
+      currency: 'CHF',
+      referenceType: invoice.paymentReference ? 'SCOR' : 'NON',
+      reference: invoice.paymentReference,
+      debtorName: invoice.customerName,
+      debtorStreet: debtorStreet,
+      debtorZip: zipMatch ? zipMatch[1] : '',
+      debtorCity: zipMatch ? zipMatch[2] : '',
+      debtorCountry: 'CH',
+      additionalInfo: invoice.invoiceNumber,
+    };
+
+    await renderQrBillOnPdf(doc, qrBillData, swissCrossBase64);
+  }
+
+  // Footer on all pages (skip QR bill page)
   const pageCount = doc.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
+    const isLastPage = i === pageCount;
+
+    // Skip footer on the QR bill page — the QR bill fills the bottom
+    if (isLastPage && isQrInvoice) continue;
+
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(150, 150, 150);
@@ -317,17 +377,4 @@ export async function generateInvoicePDF(
     return doc.output('blob');
   }
   return doc.output('dataurlstring');
-}
-
-export function downloadInvoicePDF(invoice: InvoiceData): void {
-  const doc = new jsPDF();
-  // Use same generation logic but save directly
-  generateInvoicePDF(invoice).then((dataUrl) => {
-    if (typeof dataUrl === 'string') {
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = `${invoice.invoiceNumber}.pdf`;
-      link.click();
-    }
-  });
 }

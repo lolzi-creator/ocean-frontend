@@ -99,17 +99,23 @@ export default function Dashboard() {
 
   const { filteredInvoices, filteredTimeLogs, filteredExpenses } = getFilteredData();
 
-  // Calculations
-  const totalRevenue = invoices.filter((inv) => inv.status === 'paid').reduce((sum, inv) => sum + inv.total, 0);
-  const pendingRevenue = invoices.filter((inv) => inv.status === 'sent').reduce((sum, inv) => sum + inv.total, 0);
+  // Calculations — only count actual invoices (not estimates) for revenue
+  const actualInvoices = filteredInvoices.filter((inv) => inv.type === 'invoice');
+  const filteredEstimates = filteredInvoices.filter((inv) => inv.type === 'estimate');
+  const totalRevenue = actualInvoices.filter((inv) => inv.status === 'paid').reduce((sum, inv) => sum + inv.total, 0);
+  const pendingRevenue = actualInvoices.filter((inv) => inv.status === 'sent').reduce((sum, inv) => sum + inv.total, 0);
   const totalExpensesAmount = filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0);
   const netProfit = totalRevenue - totalExpensesAmount;
-  const paidInvoices = invoices.filter((inv) => inv.status === 'paid').length;
-  const unpaidInvoices = invoices.filter((inv) => inv.status === 'sent').length;
+  const paidInvoices = actualInvoices.filter((inv) => inv.status === 'paid').length;
+  const unpaidInvoices = actualInvoices.filter((inv) => inv.status === 'sent').length;
+  const openEstimates = filteredEstimates.filter((inv) => inv.status !== 'cancelled').length;
+  const openEstimatesValue = filteredEstimates
+    .filter((inv) => inv.status !== 'cancelled')
+    .reduce((sum, inv) => sum + inv.total, 0);
   const totalHours = filteredTimeLogs.reduce((sum, log) => sum + log.hours, 0);
   const activeVehicles = vehicles.filter((v) => v.isActive).length;
 
-  // Revenue by month
+  // Revenue by month — only actual invoices
   const getRevenueByMonth = () => {
     const months = [];
     for (let i = 5; i >= 0; i--) {
@@ -119,7 +125,7 @@ export default function Dashboard() {
       const monthRevenue = invoices
         .filter((inv) => {
           const invDate = new Date(inv.createdAt);
-          return inv.status === 'paid' && invDate >= monthStart && invDate <= monthEnd;
+          return inv.type === 'invoice' && inv.status === 'paid' && invDate >= monthStart && invDate <= monthEnd;
         })
         .reduce((sum, inv) => sum + inv.total, 0);
       months.push({ month: format(monthDate, 'MMM', { locale: de }), revenue: monthRevenue });
@@ -224,6 +230,22 @@ export default function Dashboard() {
           <p className="text-xs text-neutral-500 mt-1">Netto</p>
         </div>
       </div>
+
+      {/* Estimates Summary */}
+      {openEstimates > 0 && (
+        <div className="card p-3 flex items-center gap-3 bg-purple-50 border-purple-100">
+          <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <FileText className="w-4 h-4 text-purple-600" />
+          </div>
+          <p className="text-sm text-purple-700">
+            <span className="font-semibold">{openEstimates} offene Angebote</span>
+            <span className="text-purple-500"> &middot; CHF {formatCurrency(openEstimatesValue)}</span>
+          </p>
+          <Link to="/invoices" className="ml-auto text-xs text-purple-600 font-medium hover:text-purple-700">
+            Anzeigen &rarr;
+          </Link>
+        </div>
+      )}
 
       {/* Charts and Data */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

@@ -10,34 +10,12 @@ import {
   Package,
   Clock,
   Check,
-  ChevronDown,
-  ChevronUp,
   Wrench,
-  Search,
+  DollarSign,
+  ShoppingBag,
 } from 'lucide-react';
-import { AVAILABLE_PARTS } from '../data/derendinger-parts';
-
-interface ServiceTemplatePart {
-  partCode: string;
-  name: string;
-  functionalGroup?: string;
-  quantity: number;
-}
-
-interface ServiceTemplate {
-  id: string;
-  name: string;
-  description?: string;
-  estimatedHours: number;
-  parts: ServiceTemplatePart[];
-  isActive: boolean;
-  createdBy?: {
-    id: string;
-    name?: string;
-    email: string;
-  };
-  createdAt: string;
-}
+import DerendingerCategoryBrowser from '../components/DerendingerCategoryBrowser';
+import type { ServiceTemplate, ServiceTemplatePart, CustomArticle } from '../types';
 
 export default function ServiceTemplates() {
   const [templates, setTemplates] = useState<ServiceTemplate[]>([]);
@@ -50,11 +28,10 @@ export default function ServiceTemplates() {
     name: '',
     description: '',
     estimatedHours: '1',
+    hourlyRate: '120',
   });
   const [selectedParts, setSelectedParts] = useState<ServiceTemplatePart[]>([]);
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
-  const [partsSearch, setPartsSearch] = useState('');
-
+  const [customArticles, setCustomArticles] = useState<CustomArticle[]>([]);
   useEffect(() => {
     fetchTemplates();
   }, []);
@@ -76,10 +53,8 @@ export default function ServiceTemplates() {
     );
 
     if (existingIndex >= 0) {
-      // Remove
       setSelectedParts(selectedParts.filter((_, i) => i !== existingIndex));
     } else {
-      // Add
       setSelectedParts([
         ...selectedParts,
         {
@@ -90,16 +65,6 @@ export default function ServiceTemplates() {
         },
       ]);
     }
-  };
-
-  const toggleCategory = (category: string) => {
-    const newExpanded = new Set(expandedCategories);
-    if (newExpanded.has(category)) {
-      newExpanded.delete(category);
-    } else {
-      newExpanded.add(category);
-    }
-    setExpandedCategories(newExpanded);
   };
 
   const updatePartQuantity = (partCode: string, quantity: number) => {
@@ -117,22 +82,28 @@ export default function ServiceTemplates() {
   const isPartSelected = (partCode: string) =>
     selectedParts.some((p) => p.partCode === partCode);
 
-  // Filter parts based on search
-  const filteredParts = partsSearch.trim()
-    ? AVAILABLE_PARTS.map(category => ({
-        ...category,
-        parts: category.parts.filter(part =>
-          part.name.toLowerCase().includes(partsSearch.toLowerCase()) ||
-          part.partCode.toLowerCase().includes(partsSearch.toLowerCase())
-        )
-      })).filter(category => category.parts.length > 0)
-    : AVAILABLE_PARTS;
+  // Custom articles helpers
+  const addCustomArticle = () => {
+    setCustomArticles([...customArticles, { description: '', quantity: 1, unitPrice: 0 }]);
+  };
+
+  const updateCustomArticle = (index: number, field: keyof CustomArticle, value: string | number) => {
+    setCustomArticles(customArticles.map((a, i) => i === index ? { ...a, [field]: value } : a));
+  };
+
+  const removeCustomArticle = (index: number) => {
+    setCustomArticles(customArticles.filter((_, i) => i !== index));
+  };
+
+  const customArticlesTotal = customArticles.reduce((sum, a) => sum + a.quantity * a.unitPrice, 0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (selectedParts.length === 0) {
-      toast.error('Bitte wählen Sie mindestens ein Teil aus');
+    // Validate: need at least 1 part OR 1 custom article
+    const validArticles = customArticles.filter(a => a.description.trim() && a.unitPrice > 0);
+    if (selectedParts.length === 0 && validArticles.length === 0) {
+      toast.error('Bitte wählen Sie mindestens ein Teil oder einen eigenen Artikel aus');
       return;
     }
 
@@ -141,7 +112,9 @@ export default function ServiceTemplates() {
         name: formData.name,
         description: formData.description || undefined,
         estimatedHours: parseFloat(formData.estimatedHours) || 1,
+        hourlyRate: parseFloat(formData.hourlyRate) || 120,
         parts: selectedParts,
+        customArticles: validArticles,
       };
 
       if (editingTemplate) {
@@ -169,10 +142,10 @@ export default function ServiceTemplates() {
       name: template.name,
       description: template.description || '',
       estimatedHours: template.estimatedHours.toString(),
+      hourlyRate: (template.hourlyRate || 120).toString(),
     });
     setSelectedParts(template.parts || []);
-    setPartsSearch('');
-    setExpandedCategories(new Set());
+    setCustomArticles(template.customArticles || []);
     setShowModal(true);
   };
 
@@ -196,11 +169,19 @@ export default function ServiceTemplates() {
       name: '',
       description: '',
       estimatedHours: '1',
+      hourlyRate: '120',
     });
     setSelectedParts([]);
-    setPartsSearch('');
-    setExpandedCategories(new Set());
+    setCustomArticles([]);
     setEditingTemplate(null);
+  };
+
+  const getTemplateArticleCount = (t: ServiceTemplate) => {
+    return (t.parts?.length || 0) + (t.customArticles?.length || 0);
+  };
+
+  const getTemplateMaterialTotal = (t: ServiceTemplate) => {
+    return (t.customArticles || []).reduce((sum, a) => sum + a.quantity * a.unitPrice, 0);
   };
 
   return (
@@ -210,7 +191,7 @@ export default function ServiceTemplates() {
         <div>
           <h1 className="text-2xl font-bold text-neutral-900">Service-Vorlagen</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {templates.length} Vorlagen • {templates.filter(t => t.isActive).length} aktiv
+            {templates.length} Vorlagen &bull; {templates.filter(t => t.isActive).length} aktiv
           </p>
         </div>
         <button
@@ -252,8 +233,8 @@ export default function ServiceTemplates() {
               <Package className="w-5 h-5 text-neutral-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-neutral-900">{templates.reduce((sum, t) => sum + (t.parts?.length || 0), 0)}</p>
-              <p className="text-xs text-neutral-500">Teile</p>
+              <p className="text-2xl font-bold text-neutral-900">{templates.reduce((sum, t) => sum + getTemplateArticleCount(t), 0)}</p>
+              <p className="text-xs text-neutral-500">Artikel</p>
             </div>
           </div>
         </div>
@@ -279,79 +260,105 @@ export default function ServiceTemplates() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {templates.map((template) => (
-            <div key={template.id} className="card hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-                    <Wrench className="w-5 h-5 text-primary-600" />
+          {templates.map((template) => {
+            const materialTotal = getTemplateMaterialTotal(template);
+            const articleCount = getTemplateArticleCount(template);
+
+            return (
+              <div key={template.id} className="card hover:shadow-md transition-shadow">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                      <Wrench className="w-5 h-5 text-primary-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-neutral-900">{template.name}</h3>
+                      {template.description && (
+                        <p className="text-xs text-neutral-500 line-clamp-1">{template.description}</p>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-neutral-900">{template.name}</h3>
-                    {template.description && (
-                      <p className="text-xs text-neutral-500 line-clamp-1">{template.description}</p>
+                  <div className="flex items-center gap-1">
+                    {template.isDefault && (
+                      <span className="badge badge-primary text-[10px]">Standard</span>
                     )}
+                    <span className={`badge ${template.isActive ? 'badge-success' : 'badge-gray'}`}>
+                      {template.isActive ? 'Aktiv' : 'Inaktiv'}
+                    </span>
                   </div>
                 </div>
-                <span className={`badge ${template.isActive ? 'badge-success' : 'badge-gray'}`}>
-                  {template.isActive ? 'Aktiv' : 'Inaktiv'}
-                </span>
-              </div>
 
-              <div className="flex items-center gap-4 text-xs text-neutral-500 mb-3">
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5" />
-                  {template.estimatedHours}h
-                </span>
-                <span className="flex items-center gap-1">
-                  <Package className="w-3.5 h-3.5" />
-                  {template.parts?.length || 0} Teile
-                </span>
-              </div>
+                <div className="flex items-center gap-4 text-xs text-neutral-500 mb-3">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    {template.estimatedHours}h
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <DollarSign className="w-3.5 h-3.5" />
+                    CHF {(template.hourlyRate || 120).toFixed(0)}/h
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Package className="w-3.5 h-3.5" />
+                    {articleCount} Artikel
+                  </span>
+                </div>
 
-              {/* Parts preview */}
-              {template.parts && template.parts.length > 0 && (
-                <div className="bg-neutral-50 rounded-lg p-2 mb-3">
-                  <div className="flex flex-wrap gap-1">
-                    {template.parts.slice(0, 3).map((part, i) => (
-                      <span key={i} className="px-2 py-0.5 bg-white rounded text-xs text-neutral-600 border border-neutral-200">
-                        {part.name}
-                      </span>
-                    ))}
-                    {template.parts.length > 3 && (
-                      <span className="px-2 py-0.5 bg-primary-50 rounded text-xs text-primary-600">
-                        +{template.parts.length - 3}
-                      </span>
+                {/* Parts + custom articles preview */}
+                {articleCount > 0 && (
+                  <div className="bg-neutral-50 rounded-lg p-2 mb-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(template.parts || []).slice(0, 2).map((part, i) => (
+                        <span key={`p${i}`} className="px-2 py-0.5 bg-white rounded text-xs text-neutral-600 border border-neutral-200">
+                          {part.name}
+                        </span>
+                      ))}
+                      {(template.customArticles || []).slice(0, 2).map((art, i) => (
+                        <span key={`a${i}`} className="px-2 py-0.5 bg-amber-50 rounded text-xs text-amber-700 border border-amber-200">
+                          {art.description}
+                        </span>
+                      ))}
+                      {articleCount > 4 && (
+                        <span className="px-2 py-0.5 bg-primary-50 rounded text-xs text-primary-600">
+                          +{articleCount - 4}
+                        </span>
+                      )}
+                    </div>
+                    {materialTotal > 0 && (
+                      <p className="text-xs text-neutral-500 mt-1.5 pl-1">
+                        Material: CHF {materialTotal.toFixed(2)}
+                      </p>
                     )}
                   </div>
-                </div>
-              )}
+                )}
 
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleEdit(template)}
-                  className="flex-1 btn btn-sm btn-secondary"
-                >
-                  <Edit className="w-3.5 h-3.5" />
-                  Bearbeiten
-                </button>
-                <button
-                  onClick={() => handleDelete(template.id)}
-                  className="p-2 hover:bg-danger-50 rounded-lg transition-colors"
-                  title="Löschen"
-                >
-                  <Trash2 className="w-4 h-4 text-red-600" />
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleEdit(template)}
+                    className="flex-1 btn btn-sm btn-secondary"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                    Bearbeiten
+                  </button>
+                  {!template.isDefault && (
+                    <button
+                      onClick={() => handleDelete(template.id)}
+                      className="p-2 hover:bg-danger-50 rounded-lg transition-colors"
+                      title="Löschen"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-600" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl animate-slide-up max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-3xl max-w-5xl w-full shadow-2xl animate-slide-up max-h-[90vh] overflow-hidden flex flex-col">
             <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex items-center justify-between rounded-t-3xl z-10">
               <div>
                 <h2 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
@@ -362,7 +369,7 @@ export default function ServiceTemplates() {
                 <p className="text-sm text-gray-500 mt-1">
                   {editingTemplate
                     ? 'Aktualisieren Sie die Vorlagedaten'
-                    : 'Erstellen Sie ein eigenes Service-Paket mit Teilen'}
+                    : 'Erstellen Sie ein eigenes Service-Paket mit Teilen und Artikeln'}
                 </p>
               </div>
               <button
@@ -381,7 +388,7 @@ export default function ServiceTemplates() {
               className="flex-1 overflow-y-auto p-6"
             >
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left column - Basic info */}
+                {/* Left column - Basic info + selected parts + custom articles */}
                 <div className="space-y-4">
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                     <Settings className="w-5 h-5 text-primary-600" />
@@ -414,57 +421,76 @@ export default function ServiceTemplates() {
                         setFormData({ ...formData, description: e.target.value })
                       }
                       className="input"
-                      rows={3}
+                      rows={2}
                       placeholder="Optionale Beschreibung..."
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Geschätzte Arbeitsstunden
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0.5"
-                      value={formData.estimatedHours}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          estimatedHours: e.target.value,
-                        })
-                      }
-                      className="input"
-                    />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Geschätzte Stunden
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0.5"
+                        value={formData.estimatedHours}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            estimatedHours: e.target.value,
+                          })
+                        }
+                        className="input"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Stundensatz (CHF)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={formData.hourlyRate}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            hourlyRate: e.target.value,
+                          })
+                        }
+                        className="input"
+                      />
+                    </div>
                   </div>
 
-                  {/* Selected parts summary */}
-                  <div className="mt-6">
+                  {/* Selected Derendinger parts */}
+                  <div className="mt-4">
                     <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                       <Package className="w-5 h-5 text-primary-600" />
-                      Ausgewählte Teile ({selectedParts.length})
+                      Derendinger-Teile ({selectedParts.length})
                     </h4>
 
                     {selectedParts.length === 0 ? (
-                      <div className="bg-gray-50 rounded-lg p-4 text-center text-gray-500">
-                        <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <div className="bg-gray-50 rounded-lg p-3 text-center text-gray-500">
                         <p className="text-sm">
                           Wählen Sie Teile aus dem Katalog rechts
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
                         {selectedParts.map((part) => (
                           <div
                             key={part.partCode}
-                            className="flex items-center justify-between p-3 bg-primary-50 rounded-lg border border-primary-200"
+                            className="flex items-center justify-between p-2.5 bg-primary-50 rounded-lg border border-primary-200"
                           >
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-gray-900 truncate">
+                              <p className="font-medium text-gray-900 text-sm truncate">
                                 {part.name}
                               </p>
                               <p className="text-xs text-gray-500">
-                                Code: {part.partCode}
+                                {part.partCode}
                               </p>
                             </div>
                             <div className="flex items-center gap-2 ml-2">
@@ -476,7 +502,7 @@ export default function ServiceTemplates() {
                                     part.quantity - 1
                                   )
                                 }
-                                className="w-7 h-7 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center font-bold text-sm"
+                                className="w-6 h-6 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center font-bold text-xs"
                               >
                                 -
                               </button>
@@ -491,7 +517,7 @@ export default function ServiceTemplates() {
                                     part.quantity + 1
                                   )
                                 }
-                                className="w-7 h-7 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center font-bold text-sm"
+                                className="w-6 h-6 rounded-full bg-white border border-gray-300 hover:bg-gray-100 flex items-center justify-center font-bold text-xs"
                               >
                                 +
                               </button>
@@ -501,110 +527,102 @@ export default function ServiceTemplates() {
                       </div>
                     )}
                   </div>
+
+                  {/* Custom articles section */}
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                        <ShoppingBag className="w-5 h-5 text-amber-600" />
+                        Eigene Artikel ({customArticles.length})
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={addCustomArticle}
+                        className="text-sm text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Artikel hinzufügen
+                      </button>
+                    </div>
+
+                    {customArticles.length === 0 ? (
+                      <div className="bg-amber-50 rounded-lg p-3 text-center text-amber-700 border border-amber-200">
+                        <p className="text-sm">
+                          Eigene Artikel hinzufügen (z.B. Lagerbestand)
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {customArticles.map((article, index) => (
+                          <div
+                            key={index}
+                            className="p-3 bg-amber-50 rounded-lg border border-amber-200"
+                          >
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1 space-y-2">
+                                <input
+                                  type="text"
+                                  value={article.description}
+                                  onChange={(e) => updateCustomArticle(index, 'description', e.target.value)}
+                                  className="input text-sm"
+                                  placeholder="Artikelbezeichnung..."
+                                />
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div>
+                                    <label className="text-xs text-gray-500">Anzahl</label>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={article.quantity}
+                                      onChange={(e) => updateCustomArticle(index, 'quantity', parseInt(e.target.value) || 1)}
+                                      className="input text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-gray-500">Preis/Stk.</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.50"
+                                      value={article.unitPrice}
+                                      onChange={(e) => updateCustomArticle(index, 'unitPrice', parseFloat(e.target.value) || 0)}
+                                      className="input text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-gray-500">Total</label>
+                                    <p className="input text-sm bg-gray-100 flex items-center">
+                                      CHF {(article.quantity * article.unitPrice).toFixed(2)}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeCustomArticle(index)}
+                                className="p-1 hover:bg-red-100 rounded-lg transition-colors mt-1"
+                              >
+                                <X className="w-4 h-4 text-red-500" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {customArticlesTotal > 0 && (
+                          <div className="text-right text-sm font-semibold text-amber-700 pr-2">
+                            Material Total: CHF {customArticlesTotal.toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Right column - Parts catalog */}
                 <div className="space-y-4">
-                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                    <Package className="w-5 h-5 text-primary-600" />
-                    Teile auswählen
-                  </h3>
-
-                  {/* Search */}
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                      type="text"
-                      value={partsSearch}
-                      onChange={(e) => setPartsSearch(e.target.value)}
-                      className="input pl-10"
-                      placeholder="Teile suchen... (z.B. Ölfilter, Bremse)"
-                    />
-                  </div>
-
-                  <p className="text-xs text-gray-500">
-                    {AVAILABLE_PARTS.reduce((sum, cat) => sum + cat.parts.length, 0)} Teile in {AVAILABLE_PARTS.length} Kategorien verfügbar
-                  </p>
-
-                  {/* Parts list */}
-                  <div className="border border-gray-200 rounded-xl overflow-hidden max-h-[400px] overflow-y-auto">
-                    {filteredParts.map((category) => {
-                      const isExpanded = expandedCategories.has(category.category);
-                      const selectedCount = category.parts.filter((p) =>
-                        isPartSelected(p.partCode)
-                      ).length;
-
-                      return (
-                        <div
-                          key={category.category}
-                          className="border-b border-gray-200 last:border-b-0"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => toggleCategory(category.category)}
-                            className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 transition-colors"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-gray-900 text-sm">
-                                {category.category}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                ({category.parts.length})
-                              </span>
-                              {selectedCount > 0 && (
-                                <span className="px-2 py-0.5 bg-primary-100 text-primary-700 rounded-full text-xs font-medium">
-                                  {selectedCount} ausgewählt
-                                </span>
-                              )}
-                            </div>
-                            {isExpanded ? (
-                              <ChevronUp className="w-4 h-4 text-gray-400" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4 text-gray-400" />
-                            )}
-                          </button>
-
-                          {isExpanded && (
-                            <div className="p-2 space-y-1 bg-white">
-                              {category.parts.map((part) => {
-                                const selected = isPartSelected(part.partCode);
-                                return (
-                                  <button
-                                    key={part.partCode}
-                                    type="button"
-                                    onClick={() => togglePartSelection(part)}
-                                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all ${
-                                      selected
-                                        ? 'bg-primary-100 border border-primary-300'
-                                        : 'hover:bg-gray-50 border border-transparent'
-                                    }`}
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className="font-medium text-gray-900 text-sm truncate">
-                                        {part.name}
-                                      </p>
-                                      <p className="text-xs text-gray-400">
-                                        {part.partCode}
-                                      </p>
-                                    </div>
-                                    <div
-                                      className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ml-2 ${
-                                        selected
-                                          ? 'bg-primary-500 text-white'
-                                          : 'bg-gray-200'
-                                      }`}
-                                    >
-                                      {selected && <Check className="w-3 h-3" />}
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <DerendingerCategoryBrowser
+                    onPartSelect={togglePartSelection}
+                    isPartSelected={isPartSelected}
+                  />
                 </div>
               </div>
 
@@ -622,7 +640,7 @@ export default function ServiceTemplates() {
                 <button
                   type="submit"
                   className="btn btn-primary flex-1"
-                  disabled={selectedParts.length === 0}
+                  disabled={selectedParts.length === 0 && customArticles.filter(a => a.description.trim() && a.unitPrice > 0).length === 0}
                 >
                   {editingTemplate ? 'Aktualisieren' : 'Erstellen'}
                 </button>

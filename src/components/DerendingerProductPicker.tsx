@@ -26,11 +26,13 @@ interface DerendingerArticle {
 interface SelectedProduct extends DerendingerArticle {
   quantity: number;
   isAutoSelected?: boolean;
+  _rawVehicle?: any;
 }
 
 interface ProductPickerProps {
   vin: string;
-  serviceType: string;
+  serviceType?: string;
+  partCodes?: { partCode: string; functionalGroup: string; name: string }[];
   onProductsSelected: (products: SelectedProduct[]) => void;
   selectedProducts: SelectedProduct[];
   vehicleId?: string;
@@ -41,9 +43,10 @@ interface ProductPickerProps {
 // Service types that have parts
 const SERVICE_TYPES_WITH_PARTS = ['small_service', 'big_service', 'brake_service', 'inspection'];
 
-export default function DerendingerProductPicker({ 
-  vin, 
-  serviceType, 
+export default function DerendingerProductPicker({
+  vin,
+  serviceType,
+  partCodes,
   onProductsSelected,
   selectedProducts,
   vehicleId,
@@ -128,11 +131,19 @@ export default function DerendingerProductPicker({
     return sorted.find(a => a.stock > 0) || sorted[0] || null;
   };
 
+  // Stable key for partCodes to avoid re-fetching on every render
+  const partCodesKey = useMemo(
+    () => partCodes ? partCodes.map((p) => p.partCode).sort().join(',') : '',
+    [partCodes],
+  );
+
   useEffect(() => {
-    if (vin && serviceType && SERVICE_TYPES_WITH_PARTS.includes(serviceType)) {
+    if (vin && partCodes && partCodes.length > 0) {
+      fetchProducts();
+    } else if (vin && serviceType && SERVICE_TYPES_WITH_PARTS.includes(serviceType)) {
       fetchProducts();
     }
-  }, [vin, serviceType]);
+  }, [vin, serviceType, partCodesKey]);
 
   // Auto-select best products when articles change (and not in manual mode)
   useEffect(() => {
@@ -154,6 +165,7 @@ export default function DerendingerProductPicker({
           ...best,
           quantity: 1,
           isAutoSelected: true,
+          _rawVehicle: rawVehicle,
         });
       }
     }
@@ -174,7 +186,7 @@ export default function DerendingerProductPicker({
   };
 
   const fetchProducts = async () => {
-    if (!SERVICE_TYPES_WITH_PARTS.includes(serviceType)) {
+    if (!partCodes?.length && (!serviceType || !SERVICE_TYPES_WITH_PARTS.includes(serviceType))) {
       setArticles([]);
       return;
     }
@@ -185,10 +197,13 @@ export default function DerendingerProductPicker({
     setIsAllManual(false);
 
     try {
-      const response = await api.post('/derendinger/articles/search', {
-        vin: vin,
-        serviceType: serviceType,
-      });
+      const searchBody: any = { vin };
+      if (partCodes && partCodes.length > 0) {
+        searchBody.partCodes = partCodes;
+      } else {
+        searchBody.serviceType = serviceType;
+      }
+      const response = await api.post('/derendinger/articles/search', searchBody);
 
       if (response.data.success) {
         const articles = response.data.data.articles || [];
@@ -222,7 +237,7 @@ export default function DerendingerProductPicker({
     const filtered = selectedProducts.filter(p => p.categoryName !== categoryName);
     
     // Add the new selection (mark as manual)
-    onProductsSelected([...filtered, { ...article, quantity: 1, isAutoSelected: false }]);
+    onProductsSelected([...filtered, { ...article, quantity: 1, isAutoSelected: false, _rawVehicle: rawVehicle }]);
   };
 
   const updateQuantity = (articleId: string, quantity: number) => {
@@ -285,8 +300,8 @@ export default function DerendingerProductPicker({
   const isSelected = (articleId: string) => selectedProducts.some(p => p.id === articleId);
   const getSelectedForCategory = (categoryName: string) => selectedProducts.find(p => p.categoryName === categoryName);
 
-  // Don't show anything for service types without parts
-  if (!SERVICE_TYPES_WITH_PARTS.includes(serviceType)) {
+  // Don't show anything for service types without parts (skip if using partCodes directly)
+  if (!partCodes?.length && serviceType && !SERVICE_TYPES_WITH_PARTS.includes(serviceType)) {
     return (
       <div className="text-center py-8 text-gray-500">
         <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
